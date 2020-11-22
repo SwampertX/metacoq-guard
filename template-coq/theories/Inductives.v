@@ -42,6 +42,14 @@ Module Guarded (T : Term) (D : DeclarationsSig T).
   Import T D. 
 
   Definition mind_definition := mutual_inductive_body * one_inductive_body. 
+
+(* head-normalized constructor types so that their conclusion exposes the inductive type -- context contains the parameters *)
+(*TODO *)
+(*Definition ind_ctors_hnf (i : mind_specif) : list (context * term) := *)
+  (*let (mib, oib) := npars in*)
+  (*[]. *)
+
+
   
   Definition lookup_mind_definition Σ (ind : inductive) := 
     mib <- except "lookup_mind_definition: could not find inductive" $ 
