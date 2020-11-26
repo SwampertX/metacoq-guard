@@ -12,12 +12,17 @@ Notation "a != b" := (negb(a==b)) (at level 90).
 
 
 
-
-(** WIP : An implementation of the guardedness checker *)
+(** * WIP : An implementation of the guardedness checker *)
 
 Implicit Types (Σ : global_env) (Γ : context). 
 Definition whd_all Σ c t := 
   except "whd_all: out of fuel" $ reduce_opt RedFlags.default Σ c default_fuel t. 
+
+(* β, ι, ζ weak-head reduction *)
+Definition whd_βιζ Σ Γ t := 
+  let redflags := RedFlags.mk true true true false false false in
+  except "whd_βιζ: out of fuel" $ reduce_opt redflags Σ Γ default_fuel t. 
+
 
 (* head-normalized constructor types so that their conclusion exposes the inductive type -- context contains the parameters *)
 (* TODO : similar to ind_user_lc, this might not reflect the actual Coq definition *)
@@ -265,7 +270,6 @@ Definition push_stack_args l stack :=
 
 (** ** Checking fixpoints *)
 
-
 (* TODO move *)
 Definition assert (b : bool) (err : string) : exc unit := 
   match b with 
@@ -273,7 +277,15 @@ Definition assert (b : bool) (err : string) : exc unit :=
   | true => ret tt
   end.
 
-Search "context". 
+(* Given a subterm spec for a term to match on, compute the subterm specs for the binders bound by a match in the individual branches. *)
+(* In {match c as z in ci y_s return P with |C_i x_s => t end}
+   [branches_specif renv c_spec ci] returns an array of x_s specs knowing
+   c_spec. *)
+Definition branches_specif Σ G (discriminant_spec : subterm_spec) : exc list (list subterm_spec) := 
+  (* TODO *)
+  ret [].
+
+
 
 
 (* [fold_term_with_binders g f n acc c] folds [f n] on the immediate
@@ -390,27 +402,130 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
   rv <- exc_unwrap $ map2_i find_ind nvect fbodies;;
   (* return the list of inductives as well as the fixpoint bodies in their context *)
   ret (map fst rv : list inductive, map snd rv : list (context * term)).
+
+(* FIXME: is not structurally recursive *)
+Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subterm_spec:= 
+  (* TODO *)
+  ret Not_subterm
+
+(* given a stack element, compute its subterm specification *)
+with stack_element_specif Σ stack_el {struct stack_el} : exc subterm_spec := 
+  match stack_el with 
+  | SClosure G t => subterm_specif Σ G [] t
+  | SArg spec => ret spec
+  end
+
+(* get the subterm specification for the top stack element together with the rest of the stack*)
+with extract_stack Σ stack {struct stack} : exc (subterm_spec * list stack_element) := 
+  match stack with 
+  | [] => ret (Not_subterm, [])
+  | h :: stack => 
+      spec <- stack_element_specif Σ h;;
+      ret (spec, stack)
+  end.
+
 Set Guard Checking.
 
-(* β, ι, ζ weak-head reduction *)
-Definition whd_βιζ Σ Γ t := 
-  let redflags := RedFlags.mk true true true false false false in
-  except "whd_βιζ: out of fuel" $ reduce_opt redflags Σ Γ default_fuel t. 
+(* Check that a term [t] with subterm spec [spec] can be applied to a fixpoint whose recursive argument has subterm structure [tree]*)
+Definition check_is_subterm spec tree := 
+  match spec with 
+  | Subterm Strict tree' => 
+      (* TODO: find an example where the inclusion checking is needed -- probably with nested inductives? *)
+      incl_wf_paths tree tree'
+  | Dead_code => true
+  | _ => false
+  end.
 
-(* TODO : understand and implement *)
-(* Checks if [t] only make valid recursive calls
-   [stack] is the list of constructor's argument specification and
-   arguments that will be applied after reduction.
-   example u in t where we have (match .. with |.. => t end) u *)
-Fixpoint check_rec_call (num_fixes : nat) Σ G (stack : list stack_element) (t : term) : exc unit := 
+
+(* TODO move *)
+Definition list_iter {X} (f : X -> exc unit) (l : list X) : exc unit := 
+  List.fold_left (fun (acc : exc unit) x => _ <- acc;; f x) l (ret tt).
+Definition list_iteri {X} (f : nat -> X -> exc unit) (l : list X) : exc unit := 
+  _ <- List.fold_left (fun (acc : exc nat) x => i <- acc;; _ <- f i x;; ret (S i)) l (ret 0);;
+  ret tt.
+
+(* TODO: figure out the role of SArg *)
+
+
+(* TODO understand *)
+Definition filter_stack_domain Σ Γ (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
+  (* TODO *)
+  ret stack.
+
+(*
+  Check if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].
+  [stack] is the list of constructor's argument specification and arguments that will be applied after reduction.
+  TODO    example: u in t where we have (match .. with |.. => t end) u
+  [trees] is a list of recursive structures for the decreasing arguments of the mutual fixpoints.*)
+(* FIXME: make structurally recursive *)
+Unset Guard Checking. 
+Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
+Σ G (stack : list stack_element) (t : term) {struct t} : exc unit := 
+  let check_rec_call' := check_rec_call num_fixes decreasing_args trees Σ in 
+
   (* if [t] does not make recursive calls, then it is guarded: *)
   if negb(rel_range_occurs G.(rel_min_fix) num_fixes t) then ret tt
   else 
     t_whd <- whd_βιζ Σ G.(loc_env) t;;
+    (* FIXME: the guardedness checker will not be able to determine guardedness of this function since we wrap the match in there; thus l will not be determined as a subterm (as [] isn't) *)
     let (f, l) := decompose_app t_whd in  
     match f with 
-    | tRel p => ret tt (* TODO *)
-    | tCase ci p c0 lrest => ret tt (* TODO *)
+    | tRel p =>
+        (* check if [p] is a fixpoint, i.e. we are making a recursive call *)
+        if Nat.leb G.(rel_min_fix) p && Nat.ltb p (G.(rel_min_fix) + num_fixes) then
+          (* check calls in the argument list, initialized to an empty stack*)
+          _ <- list_iter (check_rec_call' G []) l;;
+          (* get the position of the invoked fixpoint in the mutual block *)
+          let rec_fixp_index := G.(rel_min_fix) + num_fixes - p in
+          (* get the decreasing argument of the recursive call *)
+          decreasing_arg <- except "check_rec_call: invalid fixpoint index" $ nth_error decreasing_args rec_fixp_index;;
+          (* push the arguments as closures on the stack *)
+          let stack' := push_stack_closures G stack l in 
+          (* get the stack entry for the decreasing argument *)
+          z <- except "check_rec_call: not enough arguments for recursive fix call" $ nth_error stack' decreasing_arg;;
+          (* get the tree for the recursive argument type *)
+          recarg_tree <- except "check_rec_call: no tree for the recursive argument" $ nth_error trees decreasing_arg;;
+          (* infer the subterm spec of the applied argument *)
+          rec_subterm_spec <- stack_element_specif Σ z;;
+          (* verify that it is a subterm *)
+          if negb (check_is_subterm rec_subterm_spec recarg_tree) 
+          then 
+            match z with 
+            | SClosure z z' => raise "illegal recursive call (could not ensure that argument is decresasing)"
+            | SArg _ => raise "check_rec_call: fix was partially applied"
+            end
+          else ret tt
+        else ret tt
+
+    | tCase ind_nparams_relev rtf discriminant branches => 
+        (* match discriminant : ind return rtf with [branches] end *)
+        let '((ind, nparams), relev) := ind_nparams_relev in
+
+        catchE (
+          (* check the arguments [l] it is applied to, the return-type function and the discriminant *)
+          _ <- list_iter (check_rec_call' G []) l;;
+          _ <- check_rec_call' G [] rtf;;
+          _ <- check_rec_call' G [] discriminant;;
+          (* compute the recursive argument info for the arguments of each branch by looking at the tree *)
+          discriminant_spec <- subterm_specif Σ G [] discriminant;; 
+          case_branch_specs <- branches_specif Σ G discriminant_spec;; (* TODO: function will need access to match info *)
+          (* push arguments on stack *)
+          let stack' := push_stack_closures G stack l in
+          (* filter the stack to only contain the things which are allowed to propagate through matches *)
+          stack' <- filter_stack_domain Σ G.(loc_env) rtf stack';;
+          (* check the branches of the matches *)
+          list_iter (fun '(i, branch) =>
+              branch_spec <- except "check_rec_call: branch specs too short" $ nth_error case_branch_specs i;;
+              (* NOTSURE push the rec arg specs for the variables introduced by the branch *)
+              let stack_branch := push_stack_args stack' branch_spec in
+              (* check the branch *)
+              check_rec_call' G stack_branch branch) 
+            branches
+        )  
+        (fun err => 
+          (* if the checking goes wrong, we can still try harder by reducing the match away if possible *)
+          (* TODO *)
+          raise err)
 
     | tFix mfix_inner fix_ind => ret tt (* TODO *)
 
@@ -438,13 +553,14 @@ Fixpoint check_rec_call (num_fixes : nat) Σ G (stack : list stack_element) (t :
     end
 
 (* TODO: doc *)
-with check_nested_fix_body Σ G (decr : nat) (sub_spec : subterm_spec) (body : term) : exc unit := 
+with check_nested_fix_body Σ G (decr : nat) (sub_spec : subterm_spec) (body : term) {struct decr}: exc unit := 
   ret tt. 
+Set Guard Checking. 
 
 (* Check if [def] is a guarded fixpoint body, with arguments up to (and including)
   the recursive argument being introduced in the context [G]. 
   [G] has been initialized with initial guardedness information on the recursive argument.
-  [trees] is a list of recursive structures for the mutual fixpoints.
+  [trees] is a list of recursive structures for the decreasing arguments of the mutual fixpoints.
 *)
 Definition check_one_fix G (recpos : list nat) (trees : list wf_paths) (def : term) : exc unit := 
   check_rec_call (length recpos) G [] def.  
