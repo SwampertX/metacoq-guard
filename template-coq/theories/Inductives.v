@@ -23,6 +23,13 @@ Definition whd_βιζ Σ Γ t :=
   let redflags := RedFlags.mk true true true false false false in
   except "whd_βιζ: out of fuel" $ reduce_opt redflags Σ Γ default_fuel t. 
 
+(* no let/ζ reduction *)
+Definition whd_all_nolet Σ Γ t := 
+  let redflags := RedFlags.mk true true false true true true in
+  except "whd_all_nolet: out of fuel" $ reduce_opt redflags Σ Γ default_fuel t. 
+
+
+
 
 (* head-normalized constructor types so that their conclusion exposes the inductive type -- context contains the parameters *)
 (* TODO : similar to ind_user_lc, this might not reflect the actual Coq definition *)
@@ -92,6 +99,40 @@ Definition mfix_names (fixp : mfixpoint term) := map dname fixp.
 Definition mfix_types (fixp : mfixpoint term) := map dtype fixp.
 Definition mfix_bodies (fixp : mfixpoint term) := map dbody fixp.
 
+(* [decompose_lam_assum Γ ty] decomposes [ty] into a context of lambdas/lets and a remaining type, after reducing *)
+Unset Guard Checking.
+Definition decompose_lam_assum Σ Γ := 
+  let lamec_rec := fix lamec_rec Γ Γ0 ty {struct ty} :=
+    ty_whd <- whd_all_nolet Σ Γ ty;;
+    match ty_whd with 
+    | tLambda x ty body =>
+        let d := vass x ty in 
+        lamec_rec (Γ ,, d) (Γ0 ,, d) body
+    | tLetIn x t ty body => 
+        let d := vdef x t ty in
+        lamec_rec (Γ ,, d) (Γ0 ,, d) body
+    | _ => ret (Γ0, ty_whd)
+    end
+  in lamec_rec Γ [].
+
+(* [decompose_prod_assum Γ ty] decomposes [ty] into a context of prods/lets and a remaining type, after reducing *)
+Definition decompose_prod_assum Σ Γ := 
+  let prodec_rec := fix prodec_rec Γ Γ0 ty {struct ty} := 
+    ty_whd <- whd_all_nolet Σ Γ ty;;
+    match ty_whd with
+    | tProd x ty body => 
+        let d := vass x ty in 
+        prodec_rec (Γ ,, d) (Γ0 ,, d) body 
+    | tLetIn x t ty body => 
+        let d := vdef x t ty in 
+        prodec_rec (Γ ,, d) (Γ0 ,, d) body 
+    | _ => 
+        (* try to reduce *)
+        ty_whd' <- whd_all Σ Γ ty_whd;;
+        if ty_whd == ty_whd' then ret (Γ0, ty_whd) else prodec_rec Γ Γ0 ty_whd'
+    end 
+  in prodec_rec Γ []. 
+
 
 (** * Guard condition *)
 
@@ -101,6 +142,18 @@ Definition mfix_bodies (fixp : mfixpoint term) := map dbody fixp.
 (* proper subterm (strict) or loose subterm (may be equal to the recursive argument, i.e. no proper subterm) *)
 Inductive size := Loose | Strict. 
 (* induces a lattice with Loose < Strict *)
+
+Definition size_eqb (s1 s2 : size) := 
+  match s1, s2 with 
+  | Loose, Loose => true
+  | Strict, Strict => true
+  | _, _ => false
+  end.
+Instance reflect_size : ReflectEq size.
+Proof. 
+  refine {| eqb := size_eqb |}. 
+  intros [] []; constructor; congruence. 
+Defined.
 
 (* greatest lower bound/infimum *)
 Definition size_glb s1 s2 := 
@@ -121,6 +174,20 @@ Inductive subterm_spec :=
   | Subterm (s : size) (r : wf_paths)
   | Dead_code
   | Not_subterm. 
+
+Definition subterm_spec_eqb (s1 s2 : subterm_spec) := 
+  match s1, s2 with
+  | Dead_code, Dead_code => true
+  | Not_subterm, Not_subterm => true
+  | Subterm size1 tree1, Subterm size2 tree2 => 
+      (size1 == size2) && (tree1 == tree2)
+  | _, _ => false
+  end.
+Instance reflect_subterm_spec : ReflectEq subterm_spec.
+Proof. 
+  refine {| eqb := subterm_spec_eqb |}.  
+  intros [] []; unfold subterm_spec_eqb; finish_reflect. 
+Defined. 
 
 (* in contrast to the Boolean equality decider we get by eqb, this also checks equivalence if structural equality is failing *)
 Definition eq_wf_paths : wf_paths -> wf_paths -> bool := rtree_equal (eqb (A := recarg)). 
@@ -254,7 +321,7 @@ Definition push_fix_guard_env G (mfix : mfixpoint term) :=
 
 
 (** ** Stack *)
-(* TODO : how is this used *)
+(* TODO: figure out the role of SArg *)
 Inductive stack_element := 
   | SClosure G (t : term)
   | SArg (s : subterm_spec). 
@@ -266,6 +333,31 @@ Definition push_stack_closures G l stack :=
 (* push a list of args [l] to the stack *)
 Definition push_stack_args l stack := 
   List.fold_right (fun h acc => SArg h :: acc) l stack. 
+
+
+
+(* This code is very
+close to check_positive in indtypes.ml, but does no positivity check and does not
+compute the number of recursive arguments. *)
+Fixpoint build_recargs Σ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (t : term) : exc wf_paths := 
+  (* TODO *)
+  ret (Node Norec [])
+
+with build_recargs_nested Σ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (ind_args : (inductive * Instance.t) * list term) : exc wf_paths := 
+  (* TODO *)
+    ret (Node Norec [])
+
+with build_recargs_constructors Σ Γ (ra_env : list (recarg * wf_paths)) (trees : list wf_paths) (t : term) : exc (list wf_paths) := 
+  (* TODO *)
+  ret [].    
+
+
+(* [get_recargs_approx env tree ind args] builds an approximation of the recargs
+tree for [ind], knowing [args]. The argument [tree] is used to know when candidate
+nested types should be traversed, pruning the tree otherwise. *)
+Definition get_recargs_approx Σ Γ (tree : wf_paths) (ind : inductive * Instance.t) (args : list term) : exc wf_paths := 
+  (* starting with ra_env = [] seems safe because any unbound Rel will be assigned Norec *)
+  build_recargs_nested Σ Γ [] tree (ind, args). 
 
 
 (** ** Checking fixpoints *)
@@ -284,7 +376,6 @@ Definition assert (b : bool) (err : string) : exc unit :=
 Definition branches_specif Σ G (discriminant_spec : subterm_spec) : exc list (list subterm_spec) := 
   (* TODO *)
   ret [].
-
 
 
 
@@ -355,7 +446,7 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
   let fbodies := mfix_bodies fixp in
   (* push fixpoints to environment *)
   let Γ_fix := push_assumptions_context (fnames, ftypes) Γ in
-  let nvect := map rarg fixp in (*TODO; are these the recursive arguments?*)
+  let nvect := map rarg fixp in 
 
   (* Check the i-th definition [fixdef] of the mutual inductive block where k is the recursive argument, 
     making sure that no invalid recursive calls are in the types of the first [k] arguments, 
@@ -403,6 +494,35 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
   (* return the list of inductives as well as the fixpoint bodies in their context *)
   ret (map fst rv : list inductive, map snd rv : list (context * term)).
 
+(* [restrict_spec_for_match Σ Γ spec rtf] restricts the size information in [spec] to what is 
+allowed to flow through a match with return-type function [rtf] in environment (Σ, Γ). *)
+Definition restrict_spec_for_match Σ Γ spec (rtf : term) : exc subterm_spec := 
+  if spec == Not_subterm then ret Not_subterm
+  else 
+  '(rtf_context, rtf) <- decompose_lam_assum Σ Γ rtf;;
+  (* if the return-type function is not dependent, no restriction is needed *)
+  if negb(rel_range_occurs 0 (length rtf_context - 1) rtf) then ret spec 
+  else
+    (* decompose the rtf into context and rest and check if there is an inductive at the head *)
+    let Γ' := rtf_context ++ Γ in
+    '(rtf_context', rtf') <- decompose_prod_assum Σ Γ rtf;;
+    let Γ'' := rtf_context' ++ Γ' in
+    rtf'_whd <- whd_all Σ Γ rtf';;
+    let '(i, args) := decompose_app rtf'_whd in 
+    match i with 
+    | tInd ind univ => (* there's an inductive [ind] at the head under the lambdas, prods, and lets *)
+        match spec with 
+        | Dead_code => ret Dead_code
+        | Subterm size tree => 
+            (* intersect with approximation obtained by unfolding *)
+            recargs <- get_recargs_approx Σ Γ tree (ind, univ) args;;
+            recargs <- except "restrict_spec_for_match: intersection failed" $ inter_wf_paths tree recargs;;
+            ret (Subterm size recargs)
+        | _ => raise "this should not be reachable" (* TODO why *)
+        end
+    | _ => ret Not_subterm
+    end.
+
 (* FIXME: is not structurally recursive *)
 Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subterm_spec:= 
   (* TODO *)
@@ -444,13 +564,20 @@ Definition list_iteri {X} (f : nat -> X -> exc unit) (l : list X) : exc unit :=
   _ <- List.fold_left (fun (acc : exc nat) x => i <- acc;; _ <- f i x;; ret (S i)) l (ret 0);;
   ret tt.
 
-(* TODO: figure out the role of SArg *)
-
+ 
 
 (* TODO understand *)
 Definition filter_stack_domain Σ Γ (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
-  (* TODO *)
-  ret stack.
+  '(rtf_context, rtf_body) <- decompose_lam_assum Σ Γ rtf;; 
+   (* Optimization: if the predicate is not dependent, no restriction is needed
+     and we avoid building the recargs tree. *)
+  if negb (rel_range_occurs 0 (length rtf_context -1) rtf_body) then ret stack 
+  else
+    let Γ' := rtf_context ++ Γ in
+    let filter_stack Γ rtf stack : exc (list stack_element) := 
+      (* TODO *)
+      ret stack
+    in filter_stack Γ' rtf_body stack.
 
 (*
   Check if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].
