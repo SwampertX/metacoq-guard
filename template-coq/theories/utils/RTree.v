@@ -116,7 +116,7 @@ Fixpoint lift_rtree_rec depth n (t : rtree X) :=
   end.
 
 (* lift all unbound references by n *)
-Definition lift n t := if n =? 0 then t else lift_rtree_rec 0 n t. 
+Definition rtree_lift n t := if n =? 0 then t else lift_rtree_rec 0 n t. 
 
 
 (* The usual subst operation *)
@@ -126,7 +126,7 @@ Fixpoint subst_rtree_rec depth sub t :=
   | Param i j as t => 
       if i <? depth then t 
       else if i =? depth then  (* we refer to the inductive, depth, we want to substitute *)
-        lift depth (Rec j sub) (* substitute in and lift references in sub by depth in order to avoid capture *)
+        rtree_lift depth (Rec j sub) (* substitute in and lift references in sub by depth in order to avoid capture *)
       else Param (i-1) j
   | Node l children => Node l (map (subst_rtree_rec depth sub) children)
   | Rec j defs => Rec j (map (subst_rtree_rec (S depth) sub) defs)
