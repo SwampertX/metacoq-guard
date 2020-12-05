@@ -847,8 +847,8 @@ Definition get_recargs_approx Σ Γ (tree : wf_paths) (ind : inductive) (args : 
 Definition branches_binders_specif Σ G (discriminant_spec : subterm_spec) (ind : inductive) : exc list (list subterm_spec) := 
   (* get the arities of the constructors (without lets, without parameters) *)
   constr_arities <- (
-    '(_, mib) <- lookup_mind_specif Σ ind;;
-    ret $ map snd mib.(ind_ctors));;
+    '(_, oib) <- lookup_mind_specif Σ ind;;
+    ret $ map snd oib.(ind_ctors));;
   exc_unwrap $ mapi (fun i (ar : nat) => 
     match discriminant_spec return exc (list subterm_spec)  with 
     | Subterm _ tree => 
@@ -1220,6 +1220,16 @@ Definition filter_stack_domain Σ Γ (rtf : term) (stack : list stack_element) :
       end
     in filter_stack Γ' rtf_body stack.
 
+From ReductionEffect Require Import PrintingEffect. 
+  (*Fixpoint test (n : nat) := *)
+    (*match n with *)
+    (*| 0 => 0 *)
+    (*| S n => print_id (S (test n))*)
+    (*end.*)
+  (*Eval cbn in (test 4).*)
+
+Definition print {A} (a : A) : exc A := ret (print_id a). 
+
 (* 
   The main checker descending into the recursive structure of a term.
   Checks if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].
@@ -1247,7 +1257,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           (* check calls in the argument list, initialized to an empty stack*)
           _ <- list_iter (check_rec_call' G []) l;;
           (* get the position of the invoked fixpoint in the mutual block *)
-          let rec_fixp_index := G.(rel_min_fix) + num_fixes - p in
+          let rec_fixp_index := G.(rel_min_fix) + num_fixes -1 - p in
           (* get the decreasing argument of the recursive call *)
           decreasing_arg <- except "check_rec_call: invalid fixpoint index" $ nth_error decreasing_args rec_fixp_index;;
           (* push the arguments as closures on the stack -- we don't infer their full subterm information yet *)
@@ -1256,7 +1266,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           (* get the stack entry for the decreasing argument *)
           z <- except "check_rec_call: not enough arguments for recursive fix call" $ nth_error stack' decreasing_arg;;
           (* get the tree for the recursive argument type *)
-          recarg_tree <- except "check_rec_call: no tree for the recursive argument" $ nth_error trees decreasing_arg;;
+          recarg_tree <- except "check_rec_call: no tree for the recursive argument" $ nth_error trees rec_fixp_index;;
           (* infer the subterm spec of the applied argument *)
           rec_subterm_spec <- stack_element_specif Σ z;;
           (* verify that it is a subterm *)
@@ -1286,7 +1296,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           (* filter the stack to only contain the subterm info which is allowed to propagate through matches *)
           stack' <- filter_stack_domain Σ G.(loc_env) rtf stack';;
           (* check the branches of the matches *)
-          list_iter (fun '(i, branch) =>
+          list_iteri (fun i '(_, branch) =>
               branch_spec <- except "check_rec_call: branch specs too short" $ nth_error case_branch_specs i;;
               (* NOTSURE push the rec arg specs for the variables introduced by the branch *)
               let stack_branch := push_stack_args stack' branch_spec in
@@ -1472,10 +1482,10 @@ Definition check_one_fix Σ G (recpos : list nat) (trees : list wf_paths) (def :
   check_rec_call (length recpos) recpos trees Σ G [] def.  
 
 
-Definition check_fix Σ (mfix : mfixpoint term) : exc unit := 
+Definition check_fix Σ Γ (mfix : mfixpoint term) : exc unit := 
   (* check that the recursion is over inductives and get those inductives 
     as well as the bodies of the fixpoints *)
-  '(minds, rec_defs) <- inductive_of_mutfix Σ [] mfix;;
+  '(minds, rec_defs) <- inductive_of_mutfix Σ Γ mfix;;
   (* get the inductive definitions -- note that the mibs should all be the same*)
   specifs <- exc_unwrap $ map (lookup_mind_specif Σ) minds;;
   let mibs := map fst specifs in
@@ -1503,3 +1513,249 @@ Definition check_fix Σ (mfix : mfixpoint term) : exc unit :=
     check_one_fix Σ G rec_args rec_trees fix_body 
     ) fix_bodies;;
   ret tt.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+From MetaCoq.Template Require Import Environment utils.RTree Ast AstUtils All. 
+Open Scope string_scope.
+Require Import List String.
+Import ListNotations.
+Open Scope string_scope.
+
+Module kernel_lists.
+(* Kernel representation of lists *)
+Definition list_indname : inductive := 
+  {|
+   inductive_mind := (MPfile ["Datatypes"; "Init"; "Coq"], "list");
+   inductive_ind := 0 
+  |}.
+  
+(* NOTE: the constructor arguments in recargs trees are always without lets and without params! *)
+Definition list_recargs : wf_paths := 
+  Rec 0 [ Node (Mrec list_indname) [ Node Norec []; Node Norec [ Node Norec []; 
+                                                                 Param 0 1]
+                                   ]
+        ].
+Eval cbn in (expand (list_recargs)). 
+
+(*Inductive test := *)
+  (*| abc : let a := 10 * 10 in nat -> test. *)
+
+(*Eval hnf in let a := 10 * 10 in nat -> test.*)
+
+(*Print one_inductive_body.*)
+(* I don't really care about universes, just use Set everywhere *)
+
+Definition list_indbody : one_inductive_body := 
+  {| 
+    ind_name := "list";
+    ind_type := tProd {| binder_name := nNamed "A"; binder_relevance := Relevant |}
+                      (tSort (Universe.of_levels (inr (Level.Level "Coq.Init.Datatypes.60"))))
+                      (tSort (Universe.from_kernel_repr (Level.lSet, false) [(Level.Level "Coq.Init.Datatypes.60", false)]));
+    ind_kelim := InType;
+    ind_ctors := [("nil", tProd {|
+                               binder_name := nNamed "A";
+                               binder_relevance := Relevant |}
+                             (tSort
+                                (Universe.of_levels
+                                   (inr
+                                      (Level.Level "Coq.Init.Datatypes.60"))))
+                             (tApp (tRel 1) [tRel 0]), 0);
+                          ("cons",
+                          tProd
+                            {|
+                            binder_name := nNamed "A";
+                            binder_relevance := Relevant |}
+                            (tSort
+                               (Universe.of_levels
+                                  (inr
+                                     (Level.Level "Coq.Init.Datatypes.60"))))
+                            (tProd
+                               {|
+                               binder_name := nAnon;
+                               binder_relevance := Relevant |} 
+                               (tRel 0)
+                               (tProd
+                                  {|
+                                  binder_name := nAnon;
+                                  binder_relevance := Relevant |}
+                                  (tApp (tRel 2) [tRel 1])
+                                  (tApp (tRel 3) [tRel 2]))), 2)];
+               ind_projs := [];
+               ind_relevance := Relevant;
+               ind_recargs := list_recargs |}. 
+
+
+
+(* I don't care about universes. *)
+Definition univdecl := Monomorphic_ctx
+                   (LevelSetProp.of_list
+                      [Level.Level "Coq.Init.Datatypes.60"],
+                   ConstraintSet.empty).
+
+
+Definition list_param_ctxt := 
+[{|
+   decl_name := {|
+                binder_name := nNamed "A";
+                binder_relevance := Relevant |};
+   decl_body := None;
+   decl_type := tSort
+                  (Universe.of_levels
+                     (inr (Level.Level "Coq.Init.Datatypes.60"))) |}].
+Definition list_mindbody : mutual_inductive_body := 
+  {| 
+    ind_bodies := [list_indbody];
+    ind_finite := Finite;
+    ind_npars := 1;
+    (*ind_npars_unif := 1;*)
+    ind_params := list_param_ctxt;
+    ind_universes := univdecl;
+    ind_variance := None;
+  |}.
+
+
+Definition list_entry := (MPfile ["Datatypes"; "Init"; "Coq"], "list", InductiveDecl list_mindbody). 
+
+(*From MetaCoq.Template Require Import Inductives.*)
+
+Require Import List String.
+Import MonadNotation.
+Import ListNotations.
+Open Scope string_scope.
+
+(*Definition list_env. *)
+(* explicit instantiation with TemplateMonad as a definition parametric over the monad causes trouble with universe polymorphism *)
+Definition list_iter {X} (f : X -> TemplateMonad unit) (l : list X) : TemplateMonad unit := 
+  List.fold_left (fun (acc : TemplateMonad unit) x => _ <- acc;; f x) l (ret tt).
+
+
+(* whoops, I've turned the guardedness checker off *)
+Unset Guard Checking.
+Fixpoint broken_app {A : Type} (l m : list A) {struct l} := 
+  match l with
+  | [] => m
+  | a :: l' => broken_app l m
+  end.
+
+Unset Guard Checking.
+(*Set Typeclasses Debug.*)
+(*Check (_ : Monad TemplateMonad). *)
+Fixpoint check_fix_term (Σ : global_env) (Γ : context) (t : term) {struct t} := 
+  match t with 
+  | tFix mfix _ => 
+      (* TODO: we should first recursively check the body of the fix (in case of nested fixpoints!) *)
+      (*tmPrint mfix ;;*)
+      (*tmPrint Σ*)
+      (*ret tt*)
+      (*let Σ := *)
+      catchMap (check_fix Σ Γ mfix) 
+        (fun s => tmPrint s) (fun _ => tmPrint "success")
+  | tCoFix mfix idx =>
+      (* TODO *)
+      ret tt
+  | tLambda na T M => 
+      _ <- check_fix_term Σ Γ T;;
+      _ <- check_fix_term Σ (Γ ,, vass na T) M;;
+      ret tt
+  | tApp u v => 
+      _ <- check_fix_term Σ Γ u;;
+      _ <- list_iter (check_fix_term Σ Γ) v;;
+      ret tt
+  | tProd na A B => 
+      _ <- check_fix_term Σ Γ A;;
+      _ <- check_fix_term Σ (Γ ,, vass na A) B;;
+      ret tt
+  | tCast C kind t => 
+      _ <- check_fix_term Σ Γ C;;
+      _ <- check_fix_term Σ Γ t;;
+      ret tt
+  | tLetIn na b t b' => 
+      _ <- check_fix_term Σ Γ b;;
+      _ <- check_fix_term Σ Γ t;;
+      _ <- check_fix_term Σ (Γ ,, vdef na b t) b';;
+      ret tt
+  | tCase ind rtf discriminant brs =>
+    _ <- check_fix_term Σ Γ rtf;;
+    _ <- check_fix_term Σ Γ discriminant;;
+    _ <- list_iter (fun '(_, b) => check_fix_term Σ Γ b) brs;;
+    ret tt
+  | tProj _ C => 
+      _ <- check_fix_term Σ Γ C;;
+      ret tt
+  | tConst kn u => 
+      match lookup_env_const Σ kn with 
+      | Some const => 
+          match const.(cst_body) with 
+          | Some t => check_fix_term Σ Γ t
+          | _ => ret tt
+          end
+      | None => ret tt
+      end
+  | _ => ret tt 
+      (*tmPrint t;; tmPrint "not a fix" *)
+  end.
+
+Definition check_fix Σ t := check_fix_term Σ [] t. 
+
+
+
+Definition check_fix_start {A} (a : A) :=
+  mlet (Σ, t) <- tmQuoteRec a ;;
+  check_fix (list_entry :: Σ) t.
+MetaCoq Run (check_fix_start broken_app ). 
+MetaCoq Run (check_fix_start app ). 
