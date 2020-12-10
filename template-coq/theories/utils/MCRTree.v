@@ -23,7 +23,6 @@ Import ListNotations.
 Require Import Coq.Lists.ListSet. 
 Require Import Coq.Arith.PeanoNat. 
 Require Import utils.MCList. 
-Require Import utils.Except. 
 
 (* TODO: proper exception handling with the except monad *)
 
