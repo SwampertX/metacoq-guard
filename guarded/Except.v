@@ -1,18 +1,9 @@
 From MetaCoq.Template Require Export monad_utils.
 From MetaCoq.Template Require Import utils.
-(* we work in the sum monad to handle all the error stuff *)
 Export MonadNotation.
 
+(** The usual exception monad based on [sum] with a parameterizable type of exceptions. *)
 
-Instance sum_exc : MonadExc string (fun m => (m + string)%type)  :=
-  {| 
-    raise := fun T e => @inr T string e;
-    catch := fun T x f => 
-      match x with 
-      | inl x => inl x 
-      | inr y => f y
-      end
-  |}. 
 
 Instance sum_monad {Y}: Monad (fun X => X + Y)%type := 
   {| 
@@ -58,21 +49,21 @@ Section Except.
     | true => ret tt
     end.
 
-  (* catch error and potentially emit another error *)
+  (** catch error and potentially emit another error *)
   Definition catchE {X} (a : exc X) (f : Y -> exc X) : exc X := 
     match a with 
     | inl a => ret a
     | inr e => f e
     end.
 
-  (* catch error and unwrap *)
+  (** catch error and unwrap *)
   Definition catch {X} (a : exc X) (f : Y -> X) : X := 
     match a with 
     | inl a => a
     | inr e => f e
     end.
 
-  (* catch error and map *)
+  (** catch error and map *)
   Definition catchMap {X Z} (e : exc X) (f : Y -> Z) (g : X -> Z) :=
     match e with
     | inr e => f e
