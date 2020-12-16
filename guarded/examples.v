@@ -161,7 +161,7 @@ MetaCoq Run (check_fix app ).
 MetaCoq Run (check_fix rev).
 MetaCoq Run (check_fix (@Nat.div)).
 
-Fixpoint div (n m : nat) {struct n} := 
+Fixpoint div (n m : nat) := 
   match n with 
   | 0 => 0
   | S n => if Nat.ltb (S n) (S m) then 0 else S (div (n - m) m)
@@ -170,7 +170,9 @@ Compute (div 6 2).
 (** NOTE: broken. at least the calls to ltb and sub are properly checked...*)
 (** spent a lot of time debugging, but proper debugging is effectively impossible due to slowness *)
 (** might also be because I uncommented some reduction stuff because of slowness? who knows *)
+
 MetaCoq Run (check_fix div). 
+
 
 
 (* some attempt at coming up with mutual inductives *)

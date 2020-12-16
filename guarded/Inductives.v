@@ -6,6 +6,8 @@ From MetaCoq.Template.utils Require Import MCRTree.
 
 From MetaCoq.Guarded Require Import Except util.
 
+From ReductionEffect Require Import PrintingEffect. 
+
 (** List of known defects:
   - The used MetaCoq reduction (from the Checker) does not handle projections.
   - constants and constant unfolding is not handled faithfully in MetaCoq. 
@@ -35,16 +37,16 @@ From MetaCoq.Guarded Require Import Except util.
 
 Notation loc := string (only parsing).
 
+(** to get MC to print the repr of arbitary stuff -- works because MetaCoq Run uses a very lazy evaluation strategy and does not reduce the thunk *)
+Definition thunk {A} (a : A) := "". 
+Opaque thunk. (* nvm, tmEval does reduce it anyways *)
+
 (** ** Trace-monad based *)
 (** botched attempt at debugging Gallina by setting a bound on the number of bind steps in the monad and tracking [trace] info emitted in the code for easier debugging *)
 (** the bound is not very useful in practice due to lazy evaluation: the slow stuff happens at a totally different point (see the rant above) and is uncontrollable by limiting the number of steps *)
 (** in practice: not particularly useful as the string stuff like [bruijn_print] are evaluated lazily by MC Run and thus the huge unevaluated terms are passed around -- in practice, even one [trace] call with anything interesting thus leads to observational divergence *)
 
 From MetaCoq.Guarded Require Import Trace. 
-
-(** to get MC to print the repr of arbitary stuff -- works because MetaCoq Run uses a very lazy evaluation strategy and does not reduce the thunk *)
-Definition thunk {A} (a : A) := "". 
-Opaque thunk. (* nvm, tmEval does reduce it anyways *)
 
 Inductive guard_exc := 
   | ProgrammingErr (w : loc) (s : string)
@@ -425,6 +427,38 @@ Proof.
   intros [] []; unfold subterm_spec_eqb; finish_reflect. 
 Defined. 
 
+(** printer for subterm specs *)
+Definition print_inductive Σ (i : inductive) := getInductiveName Σ i.(inductive_mind) i.(inductive_ind).
+Definition print_list {X} (f : X -> string) l := 
+  (List.fold_left (fun acc e => acc +s "; " +s f e) l "[ ") +s " ]".
+
+Definition print_recarg Σ r := 
+  match r with
+  | Norec => "Norec"
+  | Mrec i => "Mrec(" +s print_inductive Σ i +s ")"
+  | Imbr i => "Imbr(" +s print_inductive Σ i +s ")"
+  end.
+
+Fixpoint print_wf_paths Σ (t : wf_paths) := 
+  match t with 
+  | Param i j => "Param " +s natToString i +s " " +s natToString j
+  | Node r l => "Node " +s print_recarg Σ r +s " " +s print_list (print_wf_paths Σ) l 
+  | Rec i l => "Rec " +s natToString i +s " " +s print_list (print_wf_paths Σ) l
+  end.
+
+Definition print_size s := 
+  match s with
+  | Loose => "Loose"
+  | Strict => "Strict"
+  end.
+
+Definition print_subterm_spec Σ (s : subterm_spec) :=
+  match s with 
+  | Subterm s paths => "Subterm " +s print_size s +s " (" +s print_wf_paths Σ paths +s ")"
+  | Dead_code => "Dead_code"
+  | Not_subterm => "Not_subterm"
+  end.
+
 (** In contrast to the Boolean equality decider we get by eqb, this also checks equivalence if structural equality is failing by unfolding the recursive trees. *)
 Definition eq_wf_paths a b: exc bool := 
   except (OtherErr "eq_wf_paths" "rtree out of fuel") $ rtree_equal (eqb (A := recarg)) a b.
@@ -600,6 +634,13 @@ Definition push_fix_guard_env G (mfix : mfixpoint term) :=
 Inductive stack_element := 
   | SClosure G (t : term)
   | SArg (s : subterm_spec). 
+
+(** Print stack elements *)
+Definition print_stack_element Σ z := 
+  match z with 
+  | SClosure G t => "SClosure " +s "G" +s (bruijn_print Σ G.(loc_env) t) (* NOTE omitting G *)
+  | SArg s => "SArg " +s print_subterm_spec Σ s
+  end.
 
 (** Push a list of closures [l] with guard env [G] to the stack *)
 Definition push_stack_closures G l stack := 
@@ -933,6 +974,8 @@ Definition branches_binders_specif Σ G (discriminant_spec : subterm_spec) (ind 
     end
     ) constr_arities.
 
+Definition print {A} (a : A) : exc unit := 
+  ret (print a).
 
 (** [subterm_specif Σ G stack t] computes the recursive structure of [t] applied to arguments with the subterm structures given by the [stack]. 
   [G] collects subterm information about variables which are in scope. 
@@ -943,8 +986,10 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
   match f with 
   | tRel k => 
       (** we abstract from applications: if [t] is a subterm, then also [t] applied to [l] is a subterm *)
+      (*trace ("subterm_specif : tRel :: is subterm " +s bruijn_print Σ G.(loc_env) t_whd);;*)
       ret $ lookup_subterm G k
   | tCase ind_relev rtf discriminant branches => 
+      (*trace ("subterm_specif : tCase :: enter " +s bruijn_print Σ G.(loc_env) t_whd);;*)
       let '(ind, relev) := ind_relev in
       (** push l to the stack *)
       let stack' := push_stack_closures G stack l in
@@ -963,6 +1008,7 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
       (** restrict the subterm info according to the rtf *)
       restrict_spec_for_match Σ G.(loc_env) spec rtf 
   | tFix mfix mfix_ind => 
+      (*trace ("subterm_specif : tFix :: enter " +s bruijn_print Σ G.(loc_env) t_whd);;*)
       cur_fix <- except (IndexErr "subterm_specif" "invalid fixpoint index" mfix_ind) $ nth_error mfix mfix_ind;;
       (** if the co-domain isn't an inductive, this surely can't be a subterm *)
       ind_cod <- (has_inductive_codomain Σ G.(loc_env) cur_fix.(dtype));; 
@@ -973,7 +1019,7 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
         (** if we can't find the inductive, just handle it as [Not_subterm]. *)
         catchMap (find_inductive Σ Γ' cur_fix_codomain) (fun _ => ret Not_subterm) $ fun '((ind, _), _) => 
         let num_fixes := length mfix in
-        (** get the recursive structure for the recursive argument's type *)
+        (** get the recursive structure for the recursive argument's type TODO *)
         rectree <- lookup_ind_subterms Σ ind;;
         (** push fixpoints to the guard env *)
         let G' := push_fix_guard_env G mfix in
@@ -1002,6 +1048,7 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
           let G'' := update_guard_spec G'' 0 arg_spec in 
           subterm_specif Σ G'' [] body'
   | tLambda x ty body => 
+     (*trace ("subterm_specif : tLambda :: enter " +s bruijn_print Σ G.(loc_env) t_whd);;*)
      assert (l == []) (OtherErr "subterm_specif" "reduction is broken");;
      (** get the subterm spec of what the lambda would be applied to (or Not_subterm if [stack] is empty)*)
      '(spec, stack') <- extract_stack_hd Σ stack;;
@@ -1037,7 +1084,9 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
 (** given a stack element, compute its subterm specification *)
 with stack_element_specif Σ stack_el {struct stack_el} : exc subterm_spec := 
   match stack_el with 
-  | SClosure G t => subterm_specif Σ G [] t
+  | SClosure G t => 
+      trace ("stack_element_specif : computing for " +s bruijn_print Σ G.(loc_env) t);;
+      subterm_specif Σ G [] t
   | SArg spec => ret spec
   end
 
@@ -1166,7 +1215,6 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           decreasing_arg <- except (IndexErr "check_rec_call" "invalid fixpoint index" rec_fixp_index) $ 
             nth_error decreasing_args rec_fixp_index;;
           (** push the arguments as closures on the stack -- we don't infer their full subterm information yet *)
-          (* NOTE : we don't really need to construct the updated stack here, but it seems cleaner *)
           let stack' := push_stack_closures G stack l in 
           (** get the stack entry for the decreasing argument *)
           z <- except (IndexErr "check_rec_call" "not enough arguments for recursive fix call" decreasing_arg) $ 
@@ -1176,7 +1224,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
             nth_error trees rec_fixp_index;;
           (** infer the subterm spec of the applied argument *)
           rec_subterm_spec <- stack_element_specif Σ z;;
-          (*trace ("check_rec_call : tRel :: spec for decreasing arg " +s )*)
+          trace ("check_rec_call : tRel :: spec for decreasing arg is " +s (print_subterm_spec Σ rec_subterm_spec));;
           (** verify that it is a subterm *)
           b_subt <-(check_is_subterm rec_subterm_spec recarg_tree);; 
           if negb b_subt
@@ -1233,7 +1281,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           let '(hd, _) := decompose_app discriminant in
           match hd with 
           | tConstruct _ _ _ => 
-              (** just check the whole thing again with the reduced discriminant *)
+             (*just check the whole thing again with the reduced discriminant *)
               check_rec_call' G [] (mkApps (tCase ind_nparams_relev rtf discriminant branches) l)
           | _ => raise err
           end
@@ -1284,7 +1332,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
             | tConstruct _ _ _ => 
                 let before := firstn decreasing_arg l in 
                 let after := skipn (S decreasing_arg) l in
-                (** try again with the reduced recursive argument *)
+                (* try again with the reduced recursive argument *)
                 check_rec_call' G [] (mkApps (tFix mfix_inner fix_ind) (before ++ rec_arg_term :: after))
             | _ => raise err
             end
@@ -1294,8 +1342,10 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           (** check the arguments *)
           catchE (list_iter (check_rec_call' G []) l) $ fun e => 
           (** an error occurred, maybe it goes better if we apply the arguments and reduce the constant? *)
-            val <- except (ProgrammingErr "check_rec_call" "constant lookup failed") $ get_const_value Σ kname;;
-            check_rec_call' G stack (tApp val l)
+          (* TODO *)
+            (*val <- except (ProgrammingErr "check_rec_call" "constant lookup failed") $ get_const_value Σ kname;;*)
+            (*check_rec_call' G stack (tApp val l)*)
+          raise e
         else 
           (** just check the arguments without fallback *)
           list_iter (check_rec_call' G []) l
