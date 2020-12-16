@@ -25,22 +25,22 @@ Fixpoint check_fix_term (Σ : global_env) (Γ : context) (t : term) {struct t} :
       (*tmPrint Γ;;*)
 
       (* NOTE : uncomment if using trace monad *)
-      (*match (check_fix Σ Γ mfix) with*)
-      (*| (_, trace, inr e) => *)
-          (*trace <- tmEval cbn trace;;*)
-          (*e <- tmEval lazy e;;*)
-          (*tmPrint trace;;*)
-          (*tmPrint e*)
-      (*| _ => tmPrint "success"*)
-      (*end*)
-
-      (* NOTE : uncomment if using exc monad *)
       match (check_fix Σ Γ mfix) with
-      | inr e => 
-          e <- tmEval lazy e;;
+      | (_, trace, inr e) => 
+          trace <- tmEval cbn trace;;
+          e <- tmEval cbn e;;
+          tmPrint trace;;
           tmPrint e
       | _ => tmPrint "success"
       end
+
+      (* NOTE : uncomment if using exc monad *)
+      (*match (check_fix Σ Γ mfix) with*)
+      (*| inr e => *)
+          (*e <- tmEval cbn e;;*)
+          (*tmPrint e*)
+      (*| _ => tmPrint "success"*)
+      (*end*)
 
   | tCoFix mfix idx =>
       tmPrint "co-fixpoint checking is currently not implemented"
@@ -110,4 +110,3 @@ Definition check_fix {A} (a : A) :=
        end;;
   (*tmPrint t;;*)
   check_fix_term Σ [] t.
-

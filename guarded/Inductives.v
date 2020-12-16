@@ -40,50 +40,50 @@ Notation loc := string (only parsing).
 (** the bound is not very useful in practice due to lazy evaluation: the slow stuff happens at a totally different point (see the rant above) and is uncontrollable by limiting the number of steps *)
 (** in practice: not particularly useful as the string stuff like [bruijn_print] are evaluated lazily by MC Run and thus the huge unevaluated terms are passed around -- in practice, even one [trace] call with anything interesting thus leads to observational divergence *)
 
-(*From MetaCoq.Guarded Require Import Trace. *)
+From MetaCoq.Guarded Require Import Trace. 
 
 (** to get MC to print the repr of arbitary stuff -- works because MetaCoq Run uses a very lazy evaluation strategy and does not reduce the thunk *)
-(*Definition thunk {A} (a : A) := "". *)
-(*Opaque thunk. [> nvm, tmEval does reduce it anyways <]*)
+Definition thunk {A} (a : A) := "". 
+Opaque thunk. (* nvm, tmEval does reduce it anyways *)
 
-(*Inductive guard_exc := *)
-  (*| ProgrammingErr (w : loc) (s : string)*)
-  (*| OtherErr (w : loc) (s : string)*)
-  (*| EnvErr (w: loc) (kn : kername) (s : string)*)
-  (*| IndexErr (w : loc) (s : string) (i : nat)*)
-  (*| GuardErr (w : loc) (s : string)*)
-  (*| TimeoutErr. *)
-
-(*max bind steps *)
-(*Definition max_steps := 500. *)
-(*Definition catchE := @catchE max_steps. *)
-(*Arguments catchE {_ _}. *)
-(*Definition catchMap := @catchMap max_steps _ TimeoutErr. *)
-(*Arguments catchMap {_ _}. *)
-  
-(*Instance: Monad (@TraceM guard_exc) := @trace_monad max_steps guard_exc TimeoutErr. *)
-(*Notation "'exc' A" := (@TraceM guard_exc A) (at level 100). *)
-(*Definition unwrap := @trc_unwrap.*)
-(*Arguments unwrap { _ _ _ _}. *)
-
-(*Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr.*)
-
-
-
-
-(** * normal exception monad *)
 Inductive guard_exc := 
   | ProgrammingErr (w : loc) (s : string)
   | OtherErr (w : loc) (s : string)
   | EnvErr (w: loc) (kn : kername) (s : string)
   | IndexErr (w : loc) (s : string) (i : nat)
-  | GuardErr (w : loc) (s : string).
-Notation "'exc' A" := (@excOn guard_exc A) (at level 100).
-(* just ignore traces *)
-Definition trace (t : string) : exc unit := ret tt.
+  | GuardErr (w : loc) (s : string)
+  | TimeoutErr. 
 
-Definition unwrap := @exc_unwrap.
+(*max bind steps *)
+Definition max_steps := 500. 
+Definition catchE := @catchE max_steps. 
+Arguments catchE {_ _}. 
+Definition catchMap := @catchMap max_steps _ TimeoutErr. 
+Arguments catchMap {_ _}. 
+  
+Instance: Monad (@TraceM guard_exc) := @trace_monad max_steps guard_exc TimeoutErr. 
+Notation "'exc' A" := (@TraceM guard_exc A) (at level 100). 
+Definition unwrap := @trc_unwrap.
 Arguments unwrap { _ _ _ _}. 
+
+Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr.
+
+
+
+
+(** * normal exception monad *)
+(*Inductive guard_exc := *)
+  (*| ProgrammingErr (w : loc) (s : string)*)
+  (*| OtherErr (w : loc) (s : string)*)
+  (*| EnvErr (w: loc) (kn : kername) (s : string)*)
+  (*| IndexErr (w : loc) (s : string) (i : nat)*)
+  (*| GuardErr (w : loc) (s : string).*)
+(*Notation "'exc' A" := (@excOn guard_exc A) (at level 100).*)
+ (*just ignore traces *)
+(*Definition trace (t : string) : exc unit := ret tt.*)
+
+(*Definition unwrap := @exc_unwrap.*)
+(*Arguments unwrap { _ _ _ _}. *)
 
 
 Notation "a == b" := (eqb a b) (at level 90). 
@@ -144,17 +144,17 @@ Implicit Types (kn : kername) (c: term).
 
 (** ** Reduction and Environment Handling *)
 Definition whd_all Σ Γ t : exc term := 
-  except (OtherErr "whd_all" "out of fuel") $ reduce_opt RedFlags.default Σ Γ default_fuel t. 
+  except (OtherErr "whd_all" "out of fuel") $ reduce_stack_term RedFlags.default Σ Γ default_fuel t. 
 
 (** β, ι, ζ weak-head reduction *)
 Definition whd_βιζ Σ Γ t : exc term := 
   let redflags := RedFlags.mk true true true false false false in
-  except (OtherErr "whd_βιζ" "out of fuel") $ reduce_opt redflags Σ Γ default_fuel t. 
+  except (OtherErr "whd_βιζ" "out of fuel") $ reduce_stack_term redflags Σ Γ default_fuel t. 
 
 (** no let/ζ reduction *)
 Definition whd_all_nolet Σ Γ t : exc term := 
   let redflags := RedFlags.mk true true false true true true in
-  except (OtherErr "whd_all_nolet" "out of fuel") $ reduce_opt redflags Σ Γ default_fuel t. 
+  except (OtherErr "whd_all_nolet" "out of fuel") $ reduce_stack_term redflags Σ Γ default_fuel t. 
 
 Definition lookup_env_const Σ kn : option constant_body := 
   match lookup_env Σ kn with 
@@ -1156,8 +1156,10 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
     | tRel p =>
         (** check if [p] is a fixpoint (of the block of fixpoints we are currently checking),i.e. we are making a recursive call *)
         if Nat.leb G.(rel_min_fix) p && Nat.ltb p (G.(rel_min_fix) + num_fixes) then
+          trace ("check_rec_call : tRel :: " +s bruijn_print Σ G.(loc_env) t);;
           (** check calls in the argument list, initialized to an empty stack*)
           _ <- list_iter (check_rec_call' G []) l;;
+          trace ("check_rec_call : tRel :: checked arguments");;
           (** get the position of the invoked fixpoint in the mutual block *)
           let rec_fixp_index := G.(rel_min_fix) + num_fixes -1 - p in
           (** get the decreasing argument of the recursive call *)
@@ -1174,12 +1176,13 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
             nth_error trees rec_fixp_index;;
           (** infer the subterm spec of the applied argument *)
           rec_subterm_spec <- stack_element_specif Σ z;;
+          (*trace ("check_rec_call : tRel :: spec for decreasing arg " +s )*)
           (** verify that it is a subterm *)
           b_subt <-(check_is_subterm rec_subterm_spec recarg_tree);; 
           if negb b_subt
           then 
             match z with 
-            | SClosure z z' => raise $ GuardErr "check_rec_call" "illegal recursive call (could not ensure that argument is decresasing)"
+            | SClosure z z' => raise $ GuardErr "check_rec_call" "illegal recursive call (could not ensure that argument is decreasing)"
             | SArg _ => 
                 (* TODO: check if this is the right error *)
                 raise $ GuardErr "check_rec_call" "fix was partially applied"
@@ -1247,6 +1250,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
     | tFix mfix_inner fix_ind => 
         this_fix <- except (OtherErr "check_rec_call" "tFix: malformed fixpoint") $ nth_error mfix_inner fix_ind;;
         let decreasing_arg := rarg this_fix in 
+        trace $ "check_rec_call : tFix :: " +s (bruijn_print Σ G.(loc_env) t_whd);;
         catchE (
           (** check args *)
           _ <- list_iter (check_rec_call' G []) l;;
