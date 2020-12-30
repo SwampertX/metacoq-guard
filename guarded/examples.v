@@ -4,6 +4,20 @@ Require Import List String.
 Import ListNotations.
 Open Scope string_scope.
 
+
+Print Nat.sub.
+Fixpoint div (n m : nat) := 
+  match n with 
+  | 0 => 0
+  | S n => if Nat.ltb (S n) (S m) then 0 else S (div (n - m) m)
+  end.  
+Compute (div 6 2).
+(** NOTE: broken. at least the calls to ltb and sub are properly checked...*)
+(** spent a lot of time debugging, but proper debugging is effectively impossible due to slowness *)
+(** might also be because I uncommented some reduction stuff because of slowness? who knows *)
+
+MetaCoq Run (check_fix div). 
+ 
 (** * Some examples + explanations *)
 (** The guardedness checker works by recursively traversing terms and checking recursive guardedness syntactically.
   The main data structure it works off are regular trees/recursive trees.
@@ -158,20 +172,9 @@ Fixpoint weird_length {X} (l :list X) {struct l} :=
 MetaCoq Run (check_fix (@weird_length)). 
 
 MetaCoq Run (check_fix app ). 
-MetaCoq Run (check_fix rev).
-MetaCoq Run (check_fix (@Nat.div)).
+(*MetaCoq Run (check_fix rev).*)
+(*MetaCoq Run (check_fix (@Nat.div)).*)
 
-Fixpoint div (n m : nat) := 
-  match n with 
-  | 0 => 0
-  | S n => if Nat.ltb (S n) (S m) then 0 else S (div (n - m) m)
-  end.  
-Compute (div 6 2).
-(** NOTE: broken. at least the calls to ltb and sub are properly checked...*)
-(** spent a lot of time debugging, but proper debugging is effectively impossible due to slowness *)
-(** might also be because I uncommented some reduction stuff because of slowness? who knows *)
-
-MetaCoq Run (check_fix div). 
 
 
 
@@ -231,6 +234,22 @@ MetaCoq Run (check_fix test).
 
 
 
+Section wo.
+  Variable p: nat -> Prop.
+  Variable p_dec: forall n, (p n) + ~(p n).
+
+  Inductive T (n: nat) : Prop := C (phi: ~p n -> T (S n)).
+
+  Definition W' : forall n, T n -> { k | p k } :=
+    fix F n (a : T n) := 
+      let (Φ) := a in 
+      match p_dec n with 
+      | inl H => exist p n H
+      | inr H => F (S n) (Φ H)
+      end.
+
+  MetaCoq Run (check_fix W').
+End wo.
 
 
 

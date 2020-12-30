@@ -3,7 +3,7 @@ Open Scope string_scope.
 Require Import List String.
 Import ListNotations.
 Open Scope string_scope.
-From MetaCoq.Guarded Require Import Inductives Except Trace.
+From MetaCoq.Guarded Require Import Inductives guardchecker Except Trace.
 
 
 (* explicit instantiation with TemplateMonad as a definition parametric over the monad causes trouble with universe polymorphism *)
@@ -76,18 +76,18 @@ Fixpoint check_fix_term (Σ : global_env) (Γ : context) (t : term) {struct t} :
   | tConst kn u => 
       (* NOTE: this is just done for demonstrational purposes for things we have to extract from the global env. 
       Normally, we would not check things which are already in the global env, as they should already have been checked. *)
-      match lookup_env_const Σ kn with 
-      | Some const => 
-          match const.(cst_body) with 
-          | Some t => check_fix_term Σ Γ t
-          | _ => ret tt
-          end
-      | None => ret tt
-      end
+      (*match lookup_env_const Σ kn with *)
+      (*| Some const => *)
+          (*match const.(cst_body) with *)
+          (*| Some t => check_fix_term Σ Γ t*)
+          (*| _ => ret tt*)
+          (*end*)
+      (*| None => ret tt*)
+      (*end*)
 
 
       (* do not unfold nested consts *)
-      (*ret tt *)
+      ret tt 
   | _ => ret tt 
   end.
 
