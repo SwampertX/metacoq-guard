@@ -1,5 +1,5 @@
 (** * "Pretty" printers for terms and contexts. *)
-(** De facto not usable for debugging in MetaCoq due to slow reduction. :( *)
+(** De facto not usable for debugging in MetaCoq due to slow reduction. *)
 (** Adapted from  https://github.com/NeuralCoder3/metacoq/blob/unary-param/translations/de_bruijn_print.v *)
 
 

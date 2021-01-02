@@ -328,11 +328,7 @@ End ilist.
 
 (** * Positivity examples *)
 
-Inductive even : nat -> Prop := 
-  | evenO : even O
-  | evenSS n: odd n -> even ((S n))
-with odd : nat -> Prop := 
-  | oddSS n : odd n -> odd (S (S n)). 
+MetaCoq Run (check_inductive even).
 
 Unset Positivity Checking.
 Inductive nonpos := 

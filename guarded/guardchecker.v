@@ -2,7 +2,7 @@ From MetaCoq.Guarded Require Import printers.
 From MetaCoq.Checker Require Import Checker. 
 From MetaCoq.Template Require Import utils BasicAst Ast AstUtils.
 From MetaCoq.Template Require Import Universes Environment Reflect LiftSubst. 
-From MetaCoq.Template.utils Require Import MCRTree. 
+From MetaCoq.Guarded Require Import MCRTree. 
 
 From MetaCoq.Guarded Require Import Except util Trace Inductives.
 
@@ -612,7 +612,7 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
         catchMap (find_inductive Σ Γ' cur_fix_codomain) (fun _ => ret Not_subterm) $ fun '((ind, _), _) => 
         let num_fixes := length mfix in
         (** get the recursive structure for the recursive argument's type*)
-        rectree <- lookup_ind_subterms Σ ind;;
+        rectree <- except (OtherErr "subterm_specif" "lookup_paths failed") $ lookup_paths ρ ind;;
         (** push fixpoints to the guard env *)
         let G' := push_fix_guard_env G mfix in
         (** we let the current fixpoint be a strict subterm *)

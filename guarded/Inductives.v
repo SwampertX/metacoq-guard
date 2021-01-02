@@ -2,7 +2,7 @@ From MetaCoq.Guarded Require Import printers.
 From MetaCoq.Checker Require Import Checker. 
 From MetaCoq.Template Require Import utils BasicAst Ast AstUtils.
 From MetaCoq.Template Require Import Universes Environment Reflect LiftSubst. 
-From MetaCoq.Template.utils Require Import MCRTree. 
+From MetaCoq.Guarded Require Import MCRTree. 
 
 From MetaCoq.Guarded Require Export Except util.
 
@@ -345,11 +345,6 @@ Definition rel_range_occurs n num t :=
     end
   in occur_rec n t.
 
-
-Definition lookup_ind_subterms Σ (ind : inductive) :=
-  '(_, oib) <- lookup_mind_specif Σ ind;;
-  ret oib.(ind_recargs).
-
 (** check if a (function) type has an inductive co-domain *)
 Definition has_inductive_codomain Σ Γ t : exc bool := 
   '(abs_context, t') <- decompose_lam_assum Σ Γ t;;
@@ -366,6 +361,37 @@ Definition has_inductive_codomain Σ Γ t : exc bool :=
 
 
 (** ** Tools for wf_paths *)
+
+(* Recursive argument labels for representing the recursive structure of constructors of inductive types. *)
+Inductive recarg := 
+  | Norec                 (* Non-recursive argument *)
+  | Mrec (i : inductive)  (* Recursive argument of type i *)
+  | Imbr (i : inductive). (* Recursive argument of "external" inductive type i, i.e. from another block of mutual inductives *)
+
+Definition wf_paths := rtree recarg.
+
+Instance reflect_rtree (X : Type) (H: ReflectEq X): ReflectEq (rtree X).
+Proof. 
+  refine {| eqb := rtree_eqb eqb |}.  
+  intros [] []; unfold rtree_eqb; simpl. 
+  (* TODO *)
+Admitted. 
+
+Definition eqb_recarg (x y : recarg) := 
+  match x, y with 
+  | Norec, Norec => true
+  | Mrec i, Mrec i' => eqb i i'
+  | Imbr i, Imbr i' => eqb i i'
+  | _, _ => false
+  end.
+Instance reflect_recarg : ReflectEq recarg. 
+Proof. 
+  refine {| eqb := eqb_recarg |}. 
+  intros [] []; unfold eqb_recarg; finish_reflect. 
+Defined.
+
+
+
 
 (** wf_paths env *)
 (** Since the MC representation of inductives does not include wf_paths, we infer them using the positivity checker and keep an additional paths_env. *)

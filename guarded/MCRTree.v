@@ -24,9 +24,7 @@ Require Import List.
 Import ListNotations. 
 Require Import Coq.Lists.ListSet. 
 Require Import Coq.Arith.PeanoNat. 
-Require Import utils.MCList. 
-
-(* TODO: proper exception handling with the except monad *)
+From MetaCoq.Template Require Import utils.MCList. 
 
 Open Scope bool_scope. 
 

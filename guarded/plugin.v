@@ -1,9 +1,9 @@
-From MetaCoq.Template Require Import Environment utils.MCRTree Ast AstUtils All. 
+From MetaCoq.Template Require Import Environment Ast AstUtils All. 
 Open Scope string_scope.
 Require Import List String.
 Import ListNotations.
 Open Scope string_scope.
-From MetaCoq.Guarded Require Import Inductives guardchecker positivitychecker Except Trace.
+From MetaCoq.Guarded Require Import MCRTree Inductives guardchecker positivitychecker Except Trace.
 
 
 (* explicit instantiation with TemplateMonad as a definition parametric over the monad causes trouble with universe polymorphism *)
@@ -48,8 +48,6 @@ Definition check_inductive {A} (a : A) :=
   | tInd ind _ => 
       match lookup_mind_specif Σ ind with 
       | (_, _, _, inl (mib, oib)) => 
-          num_unif <- tmEval cbn (num_uniform_params mib);;
-          tmPrint num_unif;;
           l <- check_inductive_mib Σ ind.(inductive_mind) mib;;
           match l with 
           | None => ret tt

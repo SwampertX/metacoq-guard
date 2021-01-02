@@ -2,7 +2,7 @@ From MetaCoq.Guarded Require Import printers.
 From MetaCoq.Checker Require Import Checker. 
 From MetaCoq.Template Require Import utils BasicAst Ast AstUtils.
 From MetaCoq.Template Require Import Universes Environment Reflect LiftSubst. 
-From MetaCoq.Template.utils Require Import MCRTree. 
+From MetaCoq.Guarded Require Import MCRTree. 
 
 From MetaCoq.Guarded Require Import Except util Trace Inductives.
 
