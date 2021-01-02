@@ -27,6 +27,7 @@ Unset Guard Checking.
 (*Definition print {A} (a : A) : exc unit := *)
   (*ret (print a).*)
 
+Implicit Types (Σ : global_env) (Γ : context) (ρ : pathsEnv). 
 
 
 (** ** Environments for keeping track of subterm information *)
@@ -340,11 +341,12 @@ Fixpoint ra_env_decompose_prod Σ Γ (ra_env : list (recarg * wf_paths)) n (c : 
 (** [tree] is used to decide when to traverse nested inductives. *)
 (** [ra_env] is used to keep track of the subterm information of dB variables. 
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec].*)
-Fixpoint build_recargs_nested Σ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (ind: inductive) (args: list term) {struct args}: exc wf_paths := 
+Fixpoint build_recargs_nested Σ ρ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (ind: inductive) (args: list term) {struct args}: exc wf_paths := 
   (** if the tree [tree] already disallows recursion, we don't need to go further *)
   b_eq <- equal_wf_paths tree mk_norec;;
   if b_eq : bool then ret tree else (
   '(mib, oib) <- lookup_mind_specif Σ ind;;
+  static_trees <- except (OtherErr "build_recargs_nested" "lookup_paths failed")$ lookup_paths_all ρ ind;;
   (** determine number of (non-) uniform parameters *)
   let num_unif_params := num_uniform_params mib in
   let num_non_unif_params := mib.(ind_npars) - num_unif_params in
@@ -373,8 +375,7 @@ Fixpoint build_recargs_nested Σ Γ (ra_env : list (recarg * wf_paths)) (tree : 
     In the case that there are no mutual inductives, we use the argument tree [tree].*)
   trees <- (if num_mut_inds == 1 
     then arg_sizes <- wf_paths_constr_args_sizes tree;; ret [arg_sizes]
-    else unwrap $ map (fun oib => wf_paths_constr_args_sizes oib.(ind_recargs)) 
-      mib.(ind_bodies));;
+    else unwrap $ map (fun tree => wf_paths_constr_args_sizes tree) static_trees);;
 
   (** function: make the recargs tree for the [j]-th inductive in the block with body [oib].
     Essentially, we instantiate the corresponding recargs tree in [trees] with the parameters in [inst_unif]. *)
@@ -396,7 +397,7 @@ Fixpoint build_recargs_nested Σ Γ (ra_env : list (recarg * wf_paths)) (tree : 
         arg_trees <- except (IndexErr "build_recargs_nested/mk_ind_recargs" "no tree for constructor" k) $ 
           nth_error constr_trees k;; 
         (** recursively build the trees for the constructor's arguments, potentially traversing nested inductives *)
-        build_recargs_constructors Σ Γ' ra_env' arg_trees c'
+        build_recargs_constructors Σ ρ Γ' ra_env' arg_trees c'
       ) abstracted_constrs;;
       (** make the tree for this nested inductive *)
       ret $ mk_ind_paths (Imbr (mkInd ind.(inductive_mind) j)) paths
@@ -416,7 +417,7 @@ Fixpoint build_recargs_nested Σ Γ (ra_env : list (recarg * wf_paths)) (tree : 
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec].*)
 (** This code is very close to check_positive in indtypes.ml, but does no positivity check and does not compute the number of recursive arguments. *)
 (** In particular, this code handles nested inductives as described above. *)
-with build_recargs Σ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (t : term) {struct t}: exc wf_paths := 
+with build_recargs Σ ρ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (t : term) {struct t}: exc wf_paths := 
   t_whd <- whd_all Σ Γ t;;
   let '(x, args) := decompose_app t_whd in
   match x with 
@@ -425,7 +426,7 @@ with build_recargs Σ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (
       assert (args == []) (OtherErr "build_recargs" "tProd case: term is ill-typed");;
       let Γ' := Γ ,, vass na type in
       let ra_env' := (Norec, mk_norec) :: ra_env in
-      build_recargs Σ Γ' ra_env' tree body
+      build_recargs Σ ρ Γ' ra_env' tree body
   | tRel k => 
       (** free variables are allowed and assigned Norec *)
       catchE (k_ra <- except (OtherErr "" "") $ nth_error ra_env k;; ret (snd k_ra)) 
@@ -435,7 +436,7 @@ with build_recargs Σ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (
     match destruct_recarg tree with 
     | None => raise $ OtherErr "build_recargs" "tInd case: malformed recargs tree"
     | Some (Imbr ind') | Some (Mrec ind') => 
-        if ind == ind' then build_recargs_nested Σ Γ ra_env tree ind args 
+        if ind == ind' then build_recargs_nested Σ ρ Γ ra_env tree ind args 
                        else ret mk_norec
     | _ => ret mk_norec 
     end
@@ -452,7 +453,7 @@ with build_recargs Σ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (
   [ra_env] is used to keep track of the recursive trees of dB variables. 
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec] with a trivial recursive tree.
 *)
-with build_recargs_constructors Σ Γ (ra_env : list (recarg * wf_paths)) (trees : list wf_paths) (c : term) {struct c}: exc (list wf_paths) := 
+with build_recargs_constructors Σ ρ Γ (ra_env : list (recarg * wf_paths)) (trees : list wf_paths) (c : term) {struct c}: exc (list wf_paths) := 
   let recargs_constr_rec := fix recargs_constr_rec Γ (ra_env : list (recarg * wf_paths)) (trees : list wf_paths) (lrec :list wf_paths) (c : term) {struct c} : exc (list wf_paths) := 
     c_whd <- whd_all Σ Γ c;;
     let '(x, args) := decompose_app c_whd in
@@ -463,7 +464,7 @@ with build_recargs_constructors Σ Γ (ra_env : list (recarg * wf_paths)) (trees
         (* compute the recursive structure of [type] *)
         first_tree <- except (ProgrammingErr "build_recargs_constructors" "trees is too short") $
           hd trees;;
-        rec_tree <- build_recargs Σ Γ ra_env first_tree type;;
+        rec_tree <- build_recargs Σ ρ Γ ra_env first_tree type;;
         (* [na] of type [type] can be assumed to be of non-recursive type for this purpose *)
         let Γ' := Γ ,, vass na type in
         let ra_env' := (Norec, mk_norec) :: ra_env in 
@@ -482,16 +483,16 @@ with build_recargs_constructors Σ Γ (ra_env : list (recarg * wf_paths)) (trees
 tree for [ind], knowing [args] that are applied to it. 
 The argument [tree] is used to know when candidate nested types should be traversed, pruning the tree otherwise. *)
 (* TODO: figure out in which cases with nested inductives this isn't actually the identity *)
-Definition get_recargs_approx Σ Γ (tree : wf_paths) (ind : inductive) (args : list term) : exc wf_paths := 
+Definition get_recargs_approx Σ ρ Γ (tree : wf_paths) (ind : inductive) (args : list term) : exc wf_paths := 
   (* starting with ra_env = [] seems safe because any unbound tRel will be assigned Norec *)
-  build_recargs_nested Σ Γ [] tree ind args. 
+  build_recargs_nested Σ ρ Γ [] tree ind args. 
 
 
 (** [restrict_spec_for_match Σ Γ spec rtf] restricts the size information in [spec] to what is allowed to flow through a match with return-type function (aka predicate) [rtf] in environment (Σ, Γ). *)
 (** [spec] is the glb of the subterm specs of the match branches*)
 (** (this is relevant for cases where we go into recursion with the result of a match) *)
 (* TODO: how does get_recargs_approx play into this?*)
-Definition restrict_spec_for_match Σ Γ spec (rtf : term) : exc subterm_spec := 
+Definition restrict_spec_for_match Σ ρ Γ spec (rtf : term) : exc subterm_spec := 
   if spec == Not_subterm then ret Not_subterm
   else 
   '(rtf_context, rtf) <- decompose_lam_assum Σ Γ rtf;;
@@ -511,7 +512,7 @@ Definition restrict_spec_for_match Σ Γ spec (rtf : term) : exc subterm_spec :=
         | Subterm size tree => 
             (** intersect with approximation obtained by unfolding *)
             (* TODO: when does get_recargs_approx actually do something other than identity? *)
-            recargs <- get_recargs_approx Σ Γ tree ind args;;
+            recargs <- get_recargs_approx Σ ρ Γ tree ind args;;
             recargs <- inter_wf_paths tree recargs;;
             recargs <- except (OtherErr "restrict_spec_for_match" "intersection failed: empty") $ recargs;;
             ret (Subterm size recargs)
@@ -566,7 +567,7 @@ Definition branches_binders_specif Σ G (discriminant_spec : subterm_spec) (ind 
 (** [subterm_specif Σ G stack t] computes the recursive structure of [t] applied to arguments with the subterm structures given by the [stack]. 
   [G] collects subterm information about variables which are in scope. 
 *)
-Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subterm_spec:= 
+Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc subterm_spec:= 
   t_whd <- whd_all Σ G.(loc_env) t;;
   let '(f, l) := decompose_app t_whd in 
   match f with 
@@ -579,7 +580,7 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
       (** push l to the stack *)
       let stack' := push_stack_closures G stack l in
       (** get subterm info for the discriminant *)
-      discriminant_spec <- subterm_specif Σ G [] discriminant;;
+      discriminant_spec <- subterm_specif Σ ρ G [] discriminant;;
       (** get subterm info for the binders in the branches *)
       branches_binders_specs <- branches_binders_specif Σ G discriminant_spec (fst ind);;
       (** determine subterm info for the full branches *)
@@ -588,16 +589,16 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
           nth_error branches_binders_specs i;;
         (* we push this to the stack, not directly to the guard env, because we haven't entered the lambdas introducing this branch's binders yet *)
         let stack_br := push_stack_args stack' binder_specs in
-        subterm_specif Σ G stack_br branch) (map snd branches);;
+        subterm_specif Σ ρ G stack_br branch) (map snd branches);;
       (** take their glb -- in case of no branches, this yields [Dead_code] (absurd elimination) *)
         (* TODO *)
-      match branches_specs with 
-      | [a;b] => raise (X := unit) (OtherErr "" (thunk a))
-      | _ => raise (X := unit) (OtherErr "" "wrong")
-      end;;
+      (*match branches_specs with *)
+      (*| [a;b] => raise (X := unit) (OtherErr "" (thunk a))*)
+      (*| _ => raise (X := unit) (OtherErr "" "wrong")*)
+      (*end;;*)
       spec <- subterm_spec_glb branches_specs;;
       (** restrict the subterm info according to the rtf *)
-      restrict_spec_for_match Σ G.(loc_env) spec rtf 
+      restrict_spec_for_match Σ ρ G.(loc_env) spec rtf 
   | tFix mfix mfix_ind => 
       (*trace ("subterm_specif : tFix :: enter " +s bruijn_print Σ G.(loc_env) t_whd);;*)
       cur_fix <- except (IndexErr "subterm_specif" "invalid fixpoint index" mfix_ind) $ nth_error mfix mfix_ind;;
@@ -631,20 +632,20 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
           we can use the subterm information on the stack for the decreasing argument of 
           the nested fixpoint (instead of taking Not_subterm) *)
         (** we check the body with an empty stack as it isn't directly applied to something*)
-        if Nat.ltb (length stack') num_abstractions then subterm_specif Σ G'' [] body' else
+        if Nat.ltb (length stack') num_abstractions then subterm_specif Σ ρ G'' [] body' else
           decreasing_arg_stackel <- except (IndexErr "subterm_specif" "stack' too short" decreasing_arg) $ 
             nth_error stack' decreasing_arg;;
-          arg_spec <- stack_element_specif Σ decreasing_arg_stackel;;
+          arg_spec <- stack_element_specif Σ ρ decreasing_arg_stackel;;
           let G'' := update_guard_spec G'' 0 arg_spec in 
-          subterm_specif Σ G'' [] body'
+          subterm_specif Σ ρ G'' [] body'
   | tLambda x ty body => 
       (* TODO *)
      (*raise (X := unit) (OtherErr "" (thunk t));;*)
      (*trace ("subterm_specif : tLambda :: enter " +s bruijn_print Σ G.(loc_env) t_whd);;*)
      assert (l == []) (OtherErr "subterm_specif" "reduction is broken");;
      (** get the subterm spec of what the lambda would be applied to (or Not_subterm if [stack] is empty)*)
-     '(spec, stack') <- extract_stack_hd Σ stack;;
-     subterm_specif Σ (push_guard_env G (x, ty, spec)) stack' body 
+     '(spec, stack') <- extract_stack_hd Σ ρ stack;;
+     subterm_specif Σ ρ (push_guard_env G (x, ty, spec)) stack' body 
   | tEvar _ _ => 
       (* evars are okay *)
       (*ret Dead_code*)
@@ -653,7 +654,7 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
       (** compute the spec for t *)
       (** TODO: why do we do this with the stack (instead of the empty stack)?
         shouldn't _the result_ of the projection be applied to the elements of the stack?? *)
-      t_spec <- subterm_specif Σ G stack t;;
+      t_spec <- subterm_specif Σ ρ G stack t;;
       match t_spec with 
       | Subterm _ paths => 
           arg_trees <- wf_paths_constr_args_sizes paths;;
@@ -674,20 +675,20 @@ Fixpoint subterm_specif Σ G (stack : list stack_element) t {struct t}: exc subt
   end
 
 (** given a stack element, compute its subterm specification *)
-with stack_element_specif Σ stack_el {struct stack_el} : exc subterm_spec := 
+with stack_element_specif Σ ρ stack_el {struct stack_el} : exc subterm_spec := 
   match stack_el with 
   | SClosure G t => 
       (*trace ((thunk (print_id ((Σ, G.(loc_env), t)))));;*)
-      subterm_specif Σ G [] t
+      subterm_specif Σ ρ G [] t
   | SArg spec => ret spec
   end
 
 (** get the subterm specification for the top stack element together with the rest of the stack*)
-with extract_stack_hd Σ stack {struct stack} : exc (subterm_spec * list stack_element) := 
+with extract_stack_hd Σ ρ stack {struct stack} : exc (subterm_spec * list stack_element) := 
   match stack with 
   | [] => ret (Not_subterm, [])
   | h :: stack => 
-      spec <- stack_element_specif Σ h;;
+      spec <- stack_element_specif Σ ρ h;;
       ret (spec, stack)
   end.
 
@@ -724,7 +725,7 @@ Definition check_is_subterm spec tree :=
 
   TODO: why do we have these constraints given by the rtf? 
 *)
-Definition filter_stack_domain Σ Γ (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
+Definition filter_stack_domain Σ ρ Γ (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
   '(rtf_context, rtf_body) <- decompose_lam_assum Σ Γ rtf;; 
    (* Optimization: if the predicate is not dependent, no restriction is needed
      and we avoid building the recargs tree. *)
@@ -750,13 +751,13 @@ Definition filter_stack_domain Σ Γ (rtf : term) (stack : list stack_element) :
           | tInd ind univ =>  
               (* it's an inductive *)
               (* inspect the corresponding subterm spec on the stack *)
-              spec' <- stack_element_specif Σ elem;;
+              spec' <- stack_element_specif Σ ρ elem;;
               match spec' with 
               | Not_subterm | Dead_code => ret elem (* don't restrict *)
               | Subterm s path => 
                   (** intersect with an approximation of the unfolded tree for [ind] *)
                   (* TODO : when does get_recargs_approx give something other than identity ? *)
-                  recargs <- get_recargs_approx Σ Γ path ind ty_args;;
+                  recargs <- get_recargs_approx Σ ρ Γ path ind ty_args;;
                   path' <- inter_wf_paths path recargs;;
                   path' <- except (OtherErr "filter_stack_domain" "intersection of trees failed: empty") path' ;;
                   (* update the recargs tree to [path'] *)
@@ -782,8 +783,8 @@ Definition filter_stack_domain Σ Γ (rtf : term) (stack : list stack_element) :
 
   [trees] is the list of recursive structures for the decreasing arguments of the mutual fixpoints.*)
 Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
-Σ G (stack : list stack_element) (t : term) {struct t} : exc unit := 
-  let check_rec_call' := check_rec_call num_fixes decreasing_args trees Σ in 
+Σ ρ G (stack : list stack_element) (t : term) {struct t} : exc unit := 
+  let check_rec_call' := check_rec_call num_fixes decreasing_args trees Σ ρ in 
 
   (** if [t] does not make recursive calls, then it is guarded: *)
   if negb(rel_range_occurs G.(rel_min_fix) num_fixes t) then ret tt
@@ -815,7 +816,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           recarg_tree <- except (IndexErr "check_rec_call" "no tree for the recursive argument" rec_fixp_index) $ 
             nth_error trees rec_fixp_index;;
           (** infer the subterm spec of the applied argument *)
-          rec_subterm_spec <- stack_element_specif Σ z;;
+          rec_subterm_spec <- stack_element_specif Σ ρ z;;
           trace ("check_rec_call : tRel :: spec for decreasing arg is " +s (print_subterm_spec Σ rec_subterm_spec));;
           (** verify that it is a subterm *)
           b_subt <-(check_is_subterm rec_subterm_spec recarg_tree);; 
@@ -851,12 +852,12 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           _ <- check_rec_call' G [] rtf;;
           _ <- check_rec_call' G [] discriminant;;
           (** compute the recursive argument info for the binders of each branch by looking at the tree *)
-          discriminant_spec <- subterm_specif Σ G [] discriminant;; 
+          discriminant_spec <- subterm_specif Σ ρ G [] discriminant;; 
           case_branch_specs <- branches_binders_specif Σ G discriminant_spec ind;; 
           (** push arguments on stack *)
           let stack' := push_stack_closures G stack l in
           (** filter the stack to only contain the subterm info which is allowed to propagate through matches *)
-          stack' <- filter_stack_domain Σ G.(loc_env) rtf stack';;
+          stack' <- filter_stack_domain Σ ρ G.(loc_env) rtf stack';;
           (** check the branches of the matches *)
           list_iteri (fun i '(_, branch) =>
               branch_spec <- except (IndexErr "check_rec_call" "branch specs too short" i) $ 
@@ -906,9 +907,9 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
               rec_arg_stackel <- except (ProgrammingErr "check_rec_call" "should be unreachable") $ 
                 nth_error stack' decreasing_arg;; 
               (** compute the subterm spec for the recursive argument *)
-              rec_arg_spec <- stack_element_specif Σ rec_arg_stackel;;
+              rec_arg_spec <- stack_element_specif Σ ρ rec_arg_stackel;;
               (** check the body of the fix after entering under the arguments and adding rec_arg_spec as the specification for [decreasing_arg] *)
-              check_nested_fix_body num_fixes decreasing_args trees Σ G' decreasing_arg rec_arg_spec body
+              check_nested_fix_body num_fixes decreasing_args trees Σ ρ G' decreasing_arg rec_arg_spec body
             else 
               (** just check the body with an empty stack *)
               check_rec_call' G' [] body)
@@ -946,7 +947,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
         (** check the type *)
         check_rec_call' G [] ty;;
         (** we take the subterm spec at the head of the stack (corresponding to the element which will be applied to this lambda), or No_subterm if the stack is empty *)
-        '(spec, stack') <- extract_stack_hd Σ stack;;
+        '(spec, stack') <- extract_stack_hd Σ ρ stack;;
         (** and check the body in the updated environment with the spec for this applied element *)
         check_rec_call' (push_guard_env G (x, ty, spec)) stack' body
 
@@ -1010,8 +1011,8 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
 (** Check the body [body] of a nested fixpoint with decreasing argument [decr] (dB index) and subterm spec [sub_spec] for the recursive argument.*)
 (** We recursively enter the body of the fix, adding the non-recursive arguments preceding [decr] to the guard env and finally add the decreasing argument with [sub_spec], before continuing to check the rest of the body *)
 with check_nested_fix_body (num_fixes : nat) (decreasing_args : list nat) trees
-Σ G (decr : nat) (sub_spec : subterm_spec) (body : term) {struct decr}: exc unit := 
-  let check_rec_call' := check_rec_call num_fixes decreasing_args trees Σ in
+Σ ρ G (decr : nat) (sub_spec : subterm_spec) (body : term) {struct decr}: exc unit := 
+  let check_rec_call' := check_rec_call num_fixes decreasing_args trees Σ ρ in
   (** reduce the body *)
   body_whd <- whd_all Σ G.(loc_env) body;;
   match body with 
@@ -1024,7 +1025,7 @@ with check_nested_fix_body (num_fixes : nat) (decreasing_args : list nat) trees
       | S n => 
         (** push to env as non-recursive variable and continue recursively *)
         let G' := push_nonrec_guard_env G (x, ty) in  
-        check_nested_fix_body num_fixes decreasing_args trees Σ G' n sub_spec body
+        check_nested_fix_body num_fixes decreasing_args trees Σ ρ G' n sub_spec body
       end
   | _ => raise $ OtherErr "check_nested_fix_body" "illformed inner fix body"
   end.
@@ -1035,8 +1036,8 @@ with check_nested_fix_body (num_fixes : nat) (decreasing_args : list nat) trees
   [trees] is a list of recursive structures for the decreasing arguments of the mutual fixpoints.
   [recpos] is a list with the recursive argument indices of the mutually defined fixpoints.
 *)
-Definition check_one_fix Σ G (recpos : list nat) (trees : list wf_paths) (def : term) : exc unit := 
-  check_rec_call (length recpos) recpos trees Σ G [] def.  
+Definition check_one_fix Σ ρ G (recpos : list nat) (trees : list wf_paths) (def : term) : exc unit := 
+  check_rec_call (length recpos) recpos trees Σ ρ G [] def.  
 
 
 (** Extract the [inductive] that [fixp] is doing recursion over (and check that the recursion is indeed over an inductive).
@@ -1106,10 +1107,11 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
 
 (** The entry point for checking fixpoints. 
   [Σ]: the global environment with all definitions used in [mfix]. 
+  [ρ]: the global environment of wf_paths (for every inductive in Σ, this should contain the wf_paths).
   [Γ]: the local environment in which the fixpoint is defined.
   [mfix]: the fixpoint to check.
 *)
-Definition check_fix Σ Γ (mfix : mfixpoint term) : exc unit := 
+Definition check_fix Σ ρ Γ (mfix : mfixpoint term) : exc unit := 
   (** check that the recursion is over inductives and get those inductives 
     as well as the bodies of the fixpoints *)
   trace "enter check_fix";;
@@ -1118,7 +1120,7 @@ Definition check_fix Σ Γ (mfix : mfixpoint term) : exc unit :=
   specifs <- unwrap $ map (lookup_mind_specif Σ) minds;;
   let mibs := map fst specifs in
   let oibs := map snd specifs in
-  let rec_trees := map (fun oib => oib.(ind_recargs)) oibs in
+  rec_trees <- unwrap $ map (fun ind => except (OtherErr "check_fix" "lookup_paths failed") $ lookup_paths ρ ind) minds;;
 
   (** the environments with arguments introduced by the fix; 
      for fix rec1 a1 ... an := .... with rec2 b1 ... bm := ... 
@@ -1138,6 +1140,6 @@ Definition check_fix Σ Γ (mfix : mfixpoint term) : exc unit :=
     (** initial guard env *)
     let G := init_guard_env fix_env rec_arg rec_tree in
     (** check the one fixpoint *)
-    check_one_fix Σ G rec_args rec_trees fix_body 
+    check_one_fix Σ ρ G rec_args rec_trees fix_body 
     ) fix_bodies;;
   ret tt.

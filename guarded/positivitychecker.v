@@ -4,7 +4,7 @@ From MetaCoq.Template Require Import utils BasicAst Ast AstUtils.
 From MetaCoq.Template Require Import Universes Environment Reflect LiftSubst. 
 From MetaCoq.Template.utils Require Import MCRTree. 
 
-From MetaCoq.Guarded Require Import Except util Inductives.
+From MetaCoq.Guarded Require Import Except util Trace Inductives.
 
 (* non-recursive arguments = indices
   non-uniform = non-uniform 
@@ -163,16 +163,18 @@ Section checker.
     (* nested mutual inductives are not supported *)
     let nested_ntypes := length mib.(ind_bodies) in 
     assert (nested_ntypes == 1) (OtherErr "check_positivity_nested" "nested mutual inductive types are not supported");;
+    
+    (* push inductive to env *)
+    ienv' <- ienv_push_inductive Σ ienv nested_ind unif_param_inst;; 
+    let '(Γ', _, _ , _) := ienv' in
 
     (** get constructor types (with parameters), assuming that the mutual inductives are at [0]...[nested_ntypes-1]*)
     let constrs := map (fun '((_, c), _) => c) oib.(ind_ctors) in
     (** abstract the parameters of the recursive occurrences of the inductive type in the constructor types *)
     (** we assume that at indices [0]... [nested_ntypes-1], the inductive types are instantiated _with_ the parameters *)
     let abstracted_constrs := abstract_params_mind_constrs nested_ntypes num_unif_params constrs in
-    
-    (* push inductive to env *)
-    ienv' <- ienv_push_inductive Σ ienv nested_ind unif_param_inst;; 
-    let '(Γ', _, _ , _) := ienv' in
+
+
     (* the inductive body in ienv' is already instantiated with the uniform parameters, but the types of the constructor in abstracted_constrs still quantify over them *)
     (* we now apply the constructors accordingly -- first the params need to be lifted since we just pushed the inductives *)
     let lifted_unif_param_inst := map (lift0 nested_ntypes) unif_param_inst in 
@@ -180,6 +182,7 @@ Section checker.
     recargs_constrs_nested <- unwrap $ map (fun constr => 
       (* apply to uniform params *)
       constr_inst <- hnf_prod_apps Σ Γ' constr lifted_unif_param_inst;;
+
       (** move non-uniform parameters into the context *) 
       '(ienv'', constr') <- ienv_decompose_prod Σ ienv' num_non_unif_params constr_inst;;     
       (* check positive occurrences recursively *)

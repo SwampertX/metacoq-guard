@@ -46,8 +46,6 @@ Arguments unwrap { _ _ _ _}.
 Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr.
 
 
-
-
 (** * normal exception monad *)
 (*Inductive guard_exc := *)
   (*| ProgrammingErr (w : loc) (s : string)*)
@@ -69,7 +67,6 @@ Notation "a != b" := (negb(a==b)) (at level 90) : exc_scope.
 (** As the guardedness checker reduces terms at many places before reducing, the key functions are not structurally recursive. 
   We therefore disable the guardedness checker for this file. *)
 Unset Guard Checking. 
-
 
 
 (** ** Compute uniform parameters *)
@@ -115,23 +112,22 @@ Definition num_uniform_params (mib : mutual_inductive_body) : nat :=
 
 
 
-(** * An implementation of the guardedness checker *)
 Implicit Types (Σ : global_env) (Γ : context). 
 Implicit Types (kn : kername) (c: term).
 
 (** ** Reduction and Environment Handling *)
 Definition whd_all Σ Γ t : exc term := 
-  except (OtherErr "whd_all" "out of fuel") $ reduce_stack_term RedFlags.default Σ Γ default_fuel t. 
+  except (OtherErr "whd_all" ("reduction error or out of fuel " +s bruijn_print Σ Γ t)) $ reduce_stack_term RedFlags.default Σ Γ default_fuel t. 
 
 (** β, ι, ζ weak-head reduction *)
 Definition whd_βιζ Σ Γ t : exc term := 
   let redflags := RedFlags.mk true true true false false false in
-  except (OtherErr "whd_βιζ" "out of fuel") $ reduce_stack_term redflags Σ Γ default_fuel t. 
+  except (OtherErr "whd_βιζ" "reduction error or out of fuel") $ reduce_stack_term redflags Σ Γ default_fuel t. 
 
 (** no let/ζ reduction *)
 Definition whd_all_nolet Σ Γ t : exc term := 
   let redflags := RedFlags.mk true true false true true true in
-  except (OtherErr "whd_all_nolet" "out of fuel") $ reduce_stack_term redflags Σ Γ default_fuel t. 
+  except (OtherErr "whd_all_nolet" "reduction error or out of fuel") $ reduce_stack_term redflags Σ Γ default_fuel t. 
 
 Definition lookup_env_const Σ kn : option constant_body := 
   match lookup_env Σ kn with 
@@ -299,7 +295,7 @@ Definition decompose_prod_n_assum Σ Γ n (t : term) : exc (context * term) :=
 Definition hnf_prod_app Σ Γ t r : exc term := 
   t_whd <- whd_all Σ Γ t;;
   match t_whd with 
-  | tProd _ _ body => ret $ subst10 r t
+  | tProd _ _ body => ret $ subst10 r body
   | _ => raise $ OtherErr "hnf_prod_app" "need a product"
   end.
 (** use the previous reduction to apply a list of arguments [l] to [t]. *)
@@ -371,6 +367,22 @@ Definition has_inductive_codomain Σ Γ t : exc bool :=
 
 (** ** Tools for wf_paths *)
 
+(** wf_paths env *)
+(** Since the MC representation of inductives does not include wf_paths, we infer them using the positivity checker and keep an additional paths_env. *)
+Definition pathsEnv := list (kername * list wf_paths).
+Implicit Type (ρ : pathsEnv).
+
+(** Lookup the wf_paths for an inductive [i]. *)
+Definition lookup_paths ρ (i : inductive) := 
+  match lookup eqb i.(inductive_mind) ρ with
+  | Some paths => nth_error paths i.(inductive_ind) 
+  | None => None
+  end.
+
+Definition lookup_paths_all ρ (i : inductive) := 
+  lookup eqb i.(inductive_mind) ρ.
+
+
 (** In contrast to the Boolean equality decider we get by eqb, this also checks equivalence if structural equality is failing by unfolding the recursive trees. *)
 Definition eq_wf_paths a b: exc bool := 
   except (OtherErr "eq_wf_paths" "rtree out of fuel") $ rtree_equal (eqb (A := recarg)) a b.
@@ -440,5 +452,4 @@ Definition abstract_params_mind_constrs num_types num_params (constrs : list ter
     (* substitute the recursive occurences of the inductive types by these abstractions *)
 
     map (subst0 make_abs) constrs.
-
 

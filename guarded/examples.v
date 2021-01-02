@@ -172,8 +172,8 @@ Fixpoint weird_length {X} (l :list X) {struct l} :=
 MetaCoq Run (check_fix (@weird_length)). 
 
 MetaCoq Run (check_fix app ). 
-(*MetaCoq Run (check_fix rev).*)
-(*MetaCoq Run (check_fix (@Nat.div)).*)
+MetaCoq Run (check_fix rev).
+MetaCoq Run (check_fix (@Nat.div)).
 
 
 
@@ -215,6 +215,7 @@ Fixpoint rtree_size {X} (t : rtree X) :=
   match t with
   | rnode l => sumn (map rtree_size l)
   end.
+MetaCoq Run (check_inductive rtree). 
 MetaCoq Run (check_fix rtree_size). 
 
 Unset Guard Checking.
@@ -325,3 +326,16 @@ MetaCoq Run (check_fix ith).
 End ilist.
 
 
+(** * Positivity examples *)
+
+Inductive even : nat -> Prop := 
+  | evenO : even O
+  | evenSS n: odd n -> even ((S n))
+with odd : nat -> Prop := 
+  | oddSS n : odd n -> odd (S (S n)). 
+
+Unset Positivity Checking.
+Inductive nonpos := 
+  | nonposC (f : nonpos -> nat) : nonpos. 
+
+MetaCoq Run (check_inductive nonpos).
