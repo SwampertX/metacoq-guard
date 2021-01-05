@@ -410,8 +410,7 @@ Definition lookup_paths_all ρ (i : inductive) :=
 
 
 (** In contrast to the Boolean equality decider we get by eqb, this also checks equivalence if structural equality is failing by unfolding the recursive trees. *)
-Definition eq_wf_paths a b: exc bool := 
-  except (OtherErr "eq_wf_paths" "rtree out of fuel") $ rtree_equal (eqb (A := recarg)) a b.
+Definition eq_wf_paths a b := rtree_equal (eqb (A := recarg)) a b.
 
 (** Join the recarg info if compatible. *)
 Definition inter_recarg r1 r2 := 
@@ -427,12 +426,12 @@ Definition inter_recarg r1 r2 :=
 (** *** Operations on recursive arguments trees *)
 
 (** Intersection and equality test on [wf_paths]. Needed to restrict subterm information flowing through dependent matches.*)
-Definition inter_wf_paths a b : exc (option (rtree recarg)):= 
-  except (OtherErr "inter_wf_paths" "rtree out of fuel") $ rtree_inter (eqb (A := recarg)) inter_recarg Norec a b.
-Definition incl_wf_paths a b : exc bool := 
-  except (OtherErr "incl_wf_paths" "rtree out of fuel") $ rtree_incl (eqb (A := recarg)) inter_recarg Norec a b.
+Definition inter_wf_paths a b := 
+  rtree_inter (eqb (A := recarg)) inter_recarg Norec a b.
+Definition incl_wf_paths a b := 
+  rtree_incl (eqb (A := recarg)) inter_recarg Norec a b.
 Definition equal_wf_paths a b := 
-  except (OtherErr "equal_wf_paths" "rtree out of fuel") $ rtree_equal (eqb (A := recarg)) a b.
+  rtree_equal (eqb (A := recarg)) a b.
 
 Definition mk_norec := mk_node Norec []. 
 

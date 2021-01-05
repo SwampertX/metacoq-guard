@@ -1,4 +1,3 @@
-
 (* Type of regular trees:
    - Param denotes tree variables (like de Bruijn indices)
      the first int is the depth of the occurrence, and the second int
@@ -9,8 +8,6 @@
      v(j+1) with parameters 0..n-1 replaced by
      Rec(0,v1..vn)..Rec(n-1,v1..vn) respectively.
  *)
-Definition fuel := 10000. 
-
 Inductive rtree (X : Type) := 
   | Param (tree_index : nat) (ind_index : nat)
   | Node (l : X) (children : list (rtree X))
@@ -24,7 +21,9 @@ Require Import List.
 Import ListNotations. 
 Require Import Coq.Lists.ListSet. 
 Require Import Coq.Arith.PeanoNat. 
-From MetaCoq.Template Require Import utils.MCList. 
+Require Import MetaCoq.Template.utils.MCList. 
+
+(* TODO: proper exception handling with the except monad *)
 
 Open Scope bool_scope. 
 
@@ -54,15 +53,11 @@ Definition list_eqb {X : Type} (eqbX : X -> X -> bool) := fix rec l l' :=
   | _, _ => false
   end.
 
-Definition forallb2_option {X : Type} (f : X -> X -> option bool) := fix rec l l' := 
+Definition forallb2 {X : Type} (f : X -> X -> bool) := fix rec l l' := 
   match l, l' with 
-  | nil, nil => Some true
-  | x :: l0, x' :: l0' => 
-      match f x x', rec l0 l0' with 
-      | Some b, Some b' => Some (b && b')
-      | _, _ => None
-      end
-  | _, _ => Some false
+  | nil, nil => true
+  | x :: l0, x' :: l0' => f x x' && rec l0 l0'
+  | _, _ => false
   end.
 
 Definition set_memb {X : Type} (eqbX : X -> X -> bool) := fix rec x s := 
@@ -140,20 +135,15 @@ Definition subst_rtree sub t := subst_rtree_rec 0 sub t.
 
 (* To avoid looping, we must check that every body introduces a node
    or a parameter *)
-Fixpoint expand' fuel t := 
-  match fuel with 
-  | 0 => None
-  | S n =>
-    match t with 
-    | Rec j defs => 
-        (* substitute by the j-th inductive type declared here *)
-        expand' n (subst_rtree defs (nth j defs default_tree)) 
-    | t => Some t
-    end
-  end. 
-Definition expand := expand' fuel. 
+Unset Guard Checking.
+Fixpoint expand t := 
+  match t with 
+  | Rec j defs => expand (subst_rtree defs (nth j defs default_tree)) (* substitute by the j-th inductive type declared here *)
+  | t => t
+  end.
+Set Guard Checking. 
 (* loops on some inputs:*)
-(*Compute(expand (Rec 0 [(Param 0 0)])). *)
+(*Fail Timeout 1 Compute(expand (Rec 0 [(Param 0 0)])). *)
   
 
 (* Given a vector of n bodies, builds the n mutual recursive trees.
@@ -162,43 +152,40 @@ Definition expand := expand' fuel.
    directly one of the parameters of depth 0. Some care is taken to
    accept definitions like  rec X=Y and Y=f(X,Y) *)                                   
 (* TODO: well, does it actually check that?? expanding first does not seem to be smart, see example from before *)
+Unset Guard Checking. 
 Definition mk_rec defs := 
-  let check := fix rec fuel (histo : set nat) d {struct fuel} := 
-    match fuel with 
-    | 0 => None
-    | S n => 
-      match expand d with 
-      | Some (Param 0 j) => 
-          if set_mem (Nat.eq_dec) j histo 
-          then None (* invalid recursive call *)
-          else 
-            match nth_error defs j with 
-            | Some e => rec n (set_add (Nat.eq_dec) j histo) e
-            | None => None (* invalid tree *)
-            end
-      | Some _ => Some tt
-      | None => None
-      end
+  let check := fix rec (histo : set nat) d {struct d} := 
+    match expand d with 
+    | Param 0 j => 
+        if set_mem (Nat.eq_dec) j histo 
+        then None (* invalid recursive call *)
+        else 
+          match nth_error defs j with 
+          | Some e => rec (set_add (Nat.eq_dec) j histo) e
+          | None => None (* invalid tree *)
+          end
+    | _ => Some tt
     end
   in 
-    if existsb is_none (mapi (fun i d => check fuel (set_add (Nat.eq_dec) i (empty_set _)) d) defs)
+    if existsb is_none (mapi (fun i d => check (set_add (Nat.eq_dec) i (empty_set _)) d) defs)
     then None
     else Some (mapi (fun i d => Rec i defs) defs).
+Set Guard Checking.
 
 (* Tree destructors, expanding loops when necessary *)
 Definition destruct_param {Y} t (f : nat -> nat -> Y) y := 
   match expand t with 
-  | Some (Param i j) => f i j
+  | Param i j => f i j
   | _ => y 
   end.
 Definition destruct_node {Y} t (f : X -> list (rtree X) -> Y) y := 
   match expand t with 
-  | Some (Node l children) => f l children
+  | Node l children => f l children
   | _ => y
   end.
 Definition is_node t := 
   match expand t with 
-  | Some (Node _ _) => true
+  | Node _ _ => true
   | _ => false
   end.
 
@@ -218,118 +205,65 @@ Definition rtree_eqb (eqbX : X -> X -> bool) := fix rec t t' :=
   | _, _ => false
   end.
 
-Fixpoint unwrap_option {X} (l : list (option X)) : option (list X) := 
-  match l with
-  | [] => Some []
-  | Some a :: l => match unwrap_option l with 
-                   | Some l => Some (a :: l)
-                   | None => None
-                   end
-  | None :: l => None
-  end.
-
 (** Equivalence test on expanded trees. It is parametrized by two
     equalities on elements:
     - [cmp] is used when checking for already seen trees
     - [cmp'] is used when comparing node labels. *)
+Unset Guard Checking.
 Definition rtree_equiv (cmp : X -> X -> bool) (cmp' : X -> X -> bool) :=
-  let compare := fix rec fuel histo t t' : option bool := 
-    if set_memb (pair_eqb (rtree_eqb cmp)) (t, t') histo then Some true else 
-    match fuel with 
-    | 0 => None 
-    | S n => 
-        match expand t, expand t' with 
-        | Some (Node x v), Some (Node x' v') => 
-            if cmp' x x' then forallb2_option (rec n ((t, t') :: histo)) v v' else Some false
-        | Some _, Some _ => Some false
-        | _, _ => None
-        end
+  let compare := fix rec histo t t' := 
+    set_memb (pair_eqb (rtree_eqb cmp)) (t, t') histo ||
+    match expand t, expand t' with 
+    | Node x v, Node x' v' => 
+        cmp' x x' && 
+        forallb2 (rec ((t, t') :: histo)) v v'
+    | _, _ => false
     end
-  in compare fuel []. 
+  in compare []. 
+Set Guard Checking. 
 
 (** The main comparison on rtree tries first structural equality, then the logical equivalence *)
-Definition rtree_equal eqb t t' : option bool := 
-  if rtree_eqb eqb t t' then Some true
-  else rtree_equiv eqb eqb t t'.
+Definition rtree_equal eqb t t' := rtree_eqb eqb t t' || rtree_equiv eqb eqb t t'.
+
 
 (** Intersection of rtrees of same arity *)
-(* Returns either:
-   - None if it ran out of fuel
-   - Some None if the trees don't intersect
-   - Some Some t if t is the intersection
-*)
-Definition rtree_inter' (eqb : X -> X -> bool) (interlbl : X -> X -> option X) def := 
-  fix rec fuel n (histo : list ((rtree X * rtree X) * (nat * nat))) t t' {struct fuel} : option (option (rtree X)) :=
-  match fuel with 
-  | 0 => None
-  | S fuel =>
-    match lookup (pair_eqb (rtree_eqb eqb)) (t, t') histo with 
-    | Some (i, j) => Some (Some (Param (n - i - 1) j))
-    | None => 
-        match t, t' with 
-        | Param i j, Param i' j' => 
-            if Nat.eqb i i' && Nat.eqb j j' then Some (Some t) else Some None
-        | Node x a, Node x' a' => 
-            match interlbl x x' with 
-            | None => Some (Some (mk_node def []))  (* cannot intersect labels, make node with default labels *)
-            | Some x'' => 
-                match list_lift_option (map2 (rec fuel n histo) a a') with 
-                | None => (* out of fuel *) None
-                | Some l => Some (option_map (Node x'') (list_lift_option l))
-                end
-            end 
-        | Rec i v, Rec i' v' => 
-            (* if possible, we preserve the shape of input trees *)
-            if Nat.eqb i i' && Nat.eqb (length v) (length v') then
-              let histo := ((t, t'), (n, i)) :: histo in 
-                match list_lift_option (map2 (rec fuel (S n) histo) v v') with
-                | None => None (* out of fuel *)
-                | Some l => Some (option_map (Rec i) (list_lift_option l))
-                end
-            else (* otherwise, mutually recursive trees are transformed into nested trees *)
-              let histo := ((t, t'), (n, 0)) :: histo in 
-                match expand t, expand t' with
-                | Some t0, Some t0' => 
-                  match rec fuel (S n) histo t0 t0' with
-                  | None => None
-                  | Some r => Some (option_map (fun s => Rec 0 [s]) r)
-                  end
-                | _, _ => None
-                end
-          | Rec _ _, _ => 
-              match expand t with
-              | Some t0 => rec fuel n histo t0 t' 
-              | _ => None
-              end
-          | _, Rec _ _ => 
-              match expand t' with 
-              | Some t0' => rec fuel n histo t t0' 
-              | _ => None
-              end
-          | _, _ => Some None
-        end
-    end
+Unset Guard Checking.
+(* n is the Rec nesting level *)
+Definition rtree_inter' (eqb : X -> X -> bool) (interlbl : X -> X -> option X) def := fix rec n (histo : list ((rtree X * rtree X) * (nat * nat))) t t' {struct t} : option (rtree X):=
+  match lookup (pair_eqb (rtree_eqb eqb)) (t, t') histo with 
+  | Some (i, j) => Some (Param (n - i - 1) j)
+  | None => 
+      match t, t' with 
+      | Param i j, Param i' j' => 
+          if Nat.eqb i i' && Nat.eqb j j' then Some t else None
+      | Node x a, Node x' a' => 
+          match interlbl x x' with 
+          | None => Some (mk_node def [])  (* cannot intersect labels, make node with default labels *)
+          | Some x'' => 
+              option_map (Node x'') (list_lift_option (map2 (rec n histo) a a'))
+          end 
+      | Rec i v, Rec i' v' => 
+          (* if possible, we preserve the shape of input trees *)
+          if Nat.eqb i i' && Nat.eqb (length v) (length v') then
+            let histo := ((t, t'), (n, i)) :: histo in 
+              option_map (Rec i) (list_lift_option (map2 (rec (S n) histo) v v'))
+          else 
+            (* otherwise, mutually recursive trees are transformed into nested trees *)
+            (* recursive occurrences refer to the n-th Rec, 0-th subtree *)
+            let histo := ((t, t'), (n, 0)) :: histo in 
+              option_map (fun s => Rec 0 [s]) (rec (S n) histo (expand t) (expand t'))
+        | Rec _ _, _ => rec n histo (expand t) t' 
+        | _, Rec _ _ => rec n histo t (expand t')
+        | _, _ => None
+      end
   end.
-Definition rtree_inter eqb interlbl def t t' := rtree_inter' eqb interlbl def fuel 0 [] t t'.
+Set Guard Checking.
+Definition rtree_inter eqb interlbl def t t' := rtree_inter' eqb interlbl def 0 [] t t'.
 
 (** Inclusion of rtrees. *)
-Definition rtree_incl (eqb : X -> X -> bool) interlbl def t t' : option bool := 
+Definition rtree_incl (eqb : X -> X -> bool) interlbl def t t' := 
   match (rtree_inter eqb interlbl def t t') with 
-  | Some (Some t'') => rtree_equal eqb t t''
-  | Some None => Some false
-  | None => None
+  | Some t'' => rtree_equal eqb t t''
+  | _ => false
   end.
-
-(** Tests if a given tree is infinite, i.e. has a branch of infinite length.
-   This corresponds to a cycle when visiting the expanded tree.
-   We use a specific comparison to detect already seen trees. *)
-(* LG: sadly it diverges on some infinite trees.... *)
-(*Definition rtree_is_infinite eqb t := *)
-  (*let is_inf := fix rec histo t := *)
-    (*set_memb (rtree_eqb eqb) t histo *)
-    (*|| match expand t with *)
-       (*| Node _ v => existsb (rec (t :: histo)) v*)
-       (*| _ => false*)
-       (*end*)
-  (*in is_inf [] t. *)
 End trees.

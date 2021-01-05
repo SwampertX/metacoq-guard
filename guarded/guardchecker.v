@@ -120,8 +120,7 @@ Definition print_subterm_spec Σ (s : subterm_spec) :=
 (** Given a tree specifying the recursive structure of a term, generate a subterm spec. *)
 (** (used e.g. when matching on an element of inductive type) *)
 Definition spec_of_tree t : exc subterm_spec:= 
-  b <- eq_wf_paths t mk_norec;;
-  if b then ret $ Not_subterm else ret $ Subterm Strict t.
+  if eq_wf_paths t mk_norec then ret $ Not_subterm else ret $ Subterm Strict t.
 
 (** Intersection of subterm specs. 
    Main use: when determining the subterm info for a match, we take the glb of the subterm infos for the branches.
@@ -144,8 +143,7 @@ Definition subterm_spec_glb2 s1 s2 : exc subterm_spec :=
   | Not_subterm, _ => ret s1
   | _, Not_subterm => ret s2
   | Subterm a1 t1, Subterm a2 t2 => 
-      inter <- inter_wf_paths t1 t2;;
-      inter <- except (OtherErr "subterm_spec_glb2" "inter_wf_paths failed: empty intersection") $ inter;;
+      inter <- except (OtherErr "subterm_spec_glb2" "inter_wf_paths failed: empty intersection") $ inter_wf_paths t1 t2;;
       ret $ Subterm (size_glb a1 a2) inter
   end.
 
@@ -233,20 +231,70 @@ Definition push_fix_guard_env G (mfix : mfixpoint term) :=
   |}.
 
 
-(** ** Stack *)
+(** ** Stack for commutative β-ι-cuts *)
 (** A stack is used to maintain subterm information for elements which are (morally) applied to the term currently under observation, and which would really be applied if we could fully reduce with concrete values. 
   [SClosure] is used for efficiency reasons: we don't want to compute subterm information for everything, so this is done on demand. It thus captures the term and the guardedness environment it's in.
   [SArg] represents subterm information for a term for which we actually have computed that information. *)
-(** Example where this is used: 
-  << 
-    match complex_fun n with 
-    | 0 => fun t => ...
-    | S n => fun t => ...
-    end k
-  >>
-  Here, the [fun t => ...] inside the match-branches would be checked with a stack having the subterm info for [k] at the head, as that term would really be applied to the [k].  
+(** This is used to simulate commutative cuts (commutation of β-ι-redexes):
+  1) Consider
+    <<
+      match ... with 
+      | 0 => fun t => ...
+      | S n => fun t => ...
+      end k
+    >>
+    Morally, this is the same as
+    <<
+      match ... with 
+      | 0 => ... [k/t]
+      | S n => ... [k/t]
+      end 
+    >>
+
+    This commutation is implemented using the stack: (the subterm info of) k is put on the stack when checking the match branches.
+
+  2) Moreover, this can also be used in the other direction:
+    <<
+      f (match ... with | 0 => ... | S n => ... end)
+    >>
+    is morally the same as 
+    << match ... with | 0 => f ... | S n => f ... end)
+  
+    This morally justifies why matches can be treated as subterms when all branches are subterms.
 *)
-(** (Note however that not all subterm information is allowed to flow through matches like that, see the functions below. ) *)
+(** Note however that NOT all subterm information is allowed to flow through matches like that, see the functions below. 
+  Namely, particular restrictions need to apply based on the return-type function:
+
+  1) When subterm information is flowing into matches (case 1 above), a check is implemented by [filter_stack_domain].
+    Essentially, the following restriction applies:
+
+    Assuming that the return-type function has the shape 
+        [λ (x1) (x2) .... (xn). B]
+    * If it is not dependent, i.e. B does not contain x1 through xn, then no restrictions apply.
+    * If [B = ∀ (y1:T1) ... (ym :Tm). T]
+      we allow the subterm information to the applicants corresponding to the yi to flow through, 
+        IF the Ti has the shape 
+         [Ti = ∀ z1 ... zk. IND t1 t2 ... tl]
+        and IND is an inductive type.
+        In that case, we infer an approximate recargs tree for IND applied to t1 .... tk and 
+        intersect it with the subterm tree for yi on the stack. 
+      All other subterm information is truncated to Not_subterm. 
+
+  2) When subterm information is flowing out of matches (case 2 above), a check is implemented by [restrict_spec_for_match].
+  Essentially, the following restriction applies:
+    Assume the return-type function has the shape [λ (x1 : T1) ... (xn : Tn). B]. 
+    * If it is not dependent, i.e. x1 through xn do not appear in B, then no restrictions apply.
+    * If it is dependent and 
+      [B = ∀ y1 ... ym. I t1 ... tk]
+      and I is an inductive, 
+      then subterm information is allowed to propagate. The subterm tree is intersected with the one for [I] computed by [get_recargs_approx].
+ 
+*)
+(**
+  Lacking restrictions to the information allowed to pass through matches in this way were cause for a soundness bug in 2013.
+  See https://sympa.inria.fr/sympa/arc/coq-club/2013-12/msg00119.html.
+*)
+
 Inductive stack_element := 
   | SClosure G (t : term)
   | SArg (s : subterm_spec). 
@@ -277,11 +325,12 @@ Definition match_recarg_inductive (ind : inductive) (r : recarg) :=
   end.
 
 (** ** Building recargs trees *)
-(** In some cases, we need to restrict the subterm information flowing through a dependent match.
-  In this case, we re-calculate an approximation of the recargs tree and intersect with it. 
+(** In some cases, we need to restrict the subterm information flowing through a dependent match, see the explanation above.
+  In this case, we calculate an approximation of the recargs tree and intersect with it. 
+
+  This code is conceptually quite similar to the positivity checker.
 *)
-(* TODO: I don't know at this point a) why these restrictions are needed for soundness
-                                    b) how the recargs tree calculated in the following differs from the one we already have statically computed -- for most purposes it seems to be identical (?) 
+(* TODO: I don't know at this point how the recargs tree calculated in the following differs from the one we already have statically computed -- for most purposes it seems to be identical (?) 
 *)
 
 (** To construct the recargs tree, the code makes use of [ra_env : list (recarg * wf_paths)], a de Bruijn context containing the recursive tree and the inductive for elements of an (instantiated) inductive type, and [(Norec, mk_norec)] for elements of non-inductive type.  
@@ -320,7 +369,6 @@ Definition context_push_ind_with_params Σ Γ (mib : mutual_inductive_body) (par
   List.fold_right (fun i acc => acc <- acc;; push_ind i acc) (ret Γ) mib.(ind_bodies).
 
 
-
 (** Move the first [n] prods of [c] into the context as elements of non-recursive type. *)
 Fixpoint ra_env_decompose_prod Σ Γ (ra_env : list (recarg * wf_paths)) n (c : term) {struct c} : exc (context * list (recarg * wf_paths) * term) :=
   match n with 
@@ -343,8 +391,7 @@ Fixpoint ra_env_decompose_prod Σ Γ (ra_env : list (recarg * wf_paths)) n (c : 
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec].*)
 Fixpoint build_recargs_nested Σ ρ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (ind: inductive) (args: list term) {struct args}: exc wf_paths := 
   (** if the tree [tree] already disallows recursion, we don't need to go further *)
-  b_eq <- equal_wf_paths tree mk_norec;;
-  if b_eq : bool then ret tree else (
+  if equal_wf_paths tree mk_norec : bool then ret tree else (
   '(mib, oib) <- lookup_mind_specif Σ ind;;
   static_trees <- except (OtherErr "build_recargs_nested" "lookup_paths failed")$ lookup_paths_all ρ ind;;
   (** determine number of (non-) uniform parameters *)
@@ -489,8 +536,17 @@ Definition get_recargs_approx Σ ρ Γ (tree : wf_paths) (ind : inductive) (args
 
 
 (** [restrict_spec_for_match Σ Γ spec rtf] restricts the size information in [spec] to what is allowed to flow through a match with return-type function (aka predicate) [rtf] in environment (Σ, Γ). *)
-(** [spec] is the glb of the subterm specs of the match branches*)
-(** (this is relevant for cases where we go into recursion with the result of a match) *)
+(** [spec] is the glb of the subterm specs of the match branches. 
+    This is relevant for cases where we go into recursion with the result of a match.
+*)
+(** 
+  Assume the return-type function has the shape [λ (x1 : T1) ... (xn : Tn). B]. 
+ * If it is not dependent, i.e. x1 through xn do not appear in B, then no restrictions apply.
+ * If it is dependent and 
+    [B = ∀ y1 ... ym. I t1 ... tk]
+    and I is an inductive, 
+    then subterm information is allowed to propagate. The subterm tree is intersected with the one for [I] computed by [get_recargs_approx].
+ *)
 (* TODO: how does get_recargs_approx play into this?*)
 Definition restrict_spec_for_match Σ ρ Γ spec (rtf : term) : exc subterm_spec := 
   if spec == Not_subterm then ret Not_subterm
@@ -513,8 +569,7 @@ Definition restrict_spec_for_match Σ ρ Γ spec (rtf : term) : exc subterm_spec
             (** intersect with approximation obtained by unfolding *)
             (* TODO: when does get_recargs_approx actually do something other than identity? *)
             recargs <- get_recargs_approx Σ ρ Γ tree ind args;;
-            recargs <- inter_wf_paths tree recargs;;
-            recargs <- except (OtherErr "restrict_spec_for_match" "intersection failed: empty") $ recargs;;
+            recargs <- except (OtherErr "restrict_spec_for_match" "intersection failed: empty") $ inter_wf_paths tree recargs;;
             ret (Subterm size recargs)
         | _ => (** we already caught this case above *)
             raise $ OtherErr "restrict_spec_for_match" "this should not be reachable" 
@@ -700,8 +755,8 @@ Definition check_is_subterm spec tree :=
       incl_wf_paths tree tree'
   | Dead_code => 
       (** [spec] been constructed by elimination of an empty type, so this is fine *)
-      ret true
-  | _ => ret false
+      true
+  | _ => false
   end.
 
 
@@ -713,63 +768,61 @@ Definition check_is_subterm spec tree :=
   [rtf] is the return-type function of the match (aka the match predicate). 
 
   Assuming that the return-type function has the shape 
-    [λ x, ∀ (x1 : T1) (x2 : T2) .... (xn : Tn). T]
-  where x is applied to the discriminant of the match, 
-  we allow the subterm information to the applicants corresponding to the xi to flow through, 
+    [λ (x1) (x2) .... (xn). B]
+  If it is not dependent, i.e. B does not contain x1 through xn, then no restrictions apply.
+  If [B = ∀ (y1:T1) ... (ym :Tm). T]
+  we allow the subterm information to the applicants corresponding to the yi to flow through, 
     IF the Ti has the shape 
-      [Ti = ∀ y1 ... yn let z1 ... let zm := _ in IND t1 t2 ... tk]
-    (where the prods and lets can appear in arbitrary permutations) and IND is an inductive type.
+      [Ti = ∀ z1 ... zk. IND t1 t2 ... tl]
+    and IND is an inductive type.
     In that case, we infer an approximate recargs tree for IND applied to t1 .... tk and 
-    intersect it with the subterm tree of xi in the stack. 
+    intersect it with the subterm tree for yi on the stack. 
   All other subterm information is truncated to Not_subterm. 
-
-  TODO: why do we have these constraints given by the rtf? 
 *)
 Definition filter_stack_domain Σ ρ Γ (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
   '(rtf_context, rtf_body) <- decompose_lam_assum Σ Γ rtf;; 
-   (* Optimization: if the predicate is not dependent, no restriction is needed
-     and we avoid building the recargs tree. *)
+  (** if the predicate is not dependent, no restriction is needed and we avoid building the recargs tree. *)
   if negb (rel_range_occurs 0 (length rtf_context) rtf_body) then ret stack 
   else
-    (* enter the rtf context *)
+    (** enter the rtf context *)
     let Γ' := Γ ,,, rtf_context in
     let filter_stack := fix filter_stack Γ t stack : exc (list stack_element) := 
       t' <- whd_all Σ Γ t;;
       match stack, t' with 
       | elem :: stack', tProd na ty t0 => 
-        (* the element [elem] in the stack would be applied to what corresponds to the [∀ na : ty, t0] in the rtf *)
+        (** the element [elem] in the stack would be applied to what corresponds to the [∀ na : ty, t0] in the rtf *)
         let d := vass na ty in 
-        (* decompose the type [ty] of [na] *)
+        (** decompose the type [ty] of [na] *)
         '(ctx, ty) <- decompose_prod_assum Σ Γ ty;;
         let Γ' := Γ ,,, ctx in
-        (* now in the context of the type *)
+        (** now in the context of the type *)
         whd_ty <- whd_all Σ Γ' ty;;
-        (* decompose the rest of the type again and check if the LHS is an inductive *)
+        (** decompose the rest of the type again and check if the LHS is an inductive *)
         let (ty', ty_args) := decompose_app whd_ty in
-        (* compute what is allowed to flow through *)
+        (** compute what is allowed to flow through *)
         elem' <- match ty' with
           | tInd ind univ =>  
-              (* it's an inductive *)
-              (* inspect the corresponding subterm spec on the stack *)
+              (** it's an inductive *)
+              (** inspect the corresponding subterm spec on the stack *)
               spec' <- stack_element_specif Σ ρ elem;;
               match spec' with 
-              | Not_subterm | Dead_code => ret elem (* don't restrict *)
+              | Not_subterm | Dead_code => ret elem (* don't restrict. NOTE: might optimise to directly return the de-thunked spec we just computed? *)
               | Subterm s path => 
                   (** intersect with an approximation of the unfolded tree for [ind] *)
                   (* TODO : when does get_recargs_approx give something other than identity ? *)
                   recargs <- get_recargs_approx Σ ρ Γ path ind ty_args;;
-                  path' <- inter_wf_paths path recargs;;
-                  path' <- except (OtherErr "filter_stack_domain" "intersection of trees failed: empty") path' ;;
+                  path' <- except (OtherErr "filter_stack_domain" "intersection of trees failed: empty") $ inter_wf_paths path recargs;;
                   (* update the recargs tree to [path'] *)
                   ret $ SArg (Subterm s path') 
               end
-                 | _ => ret $ SArg Not_subterm (* if not an inductive, the subterm information is not propagated *) 
+          | _ => 
+              (** if not an inductive, the subterm information is not propagated *) 
+              ret $ SArg Not_subterm 
           end;;
-        (** NOTE: the Coq impl goes into recursion with Γ' ,, d. I believe that is wrong and have fixed it here. *)
         rest <- filter_stack (Γ ,, d) t0 stack';;
         ret (elem' :: rest)
       | _, _ => 
-          (* the rest of the stack is restricted to No_subterm, subterm information is not allowed to flow through *)
+          (** the rest of the stack is restricted to No_subterm, subterm information is not allowed to flow through *)
           ret (List.fold_right (fun _ acc => SArg (Not_subterm) :: acc) [] stack)
       end
     in filter_stack Γ' rtf_body stack.
@@ -819,8 +872,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           rec_subterm_spec <- stack_element_specif Σ ρ z;;
           trace ("check_rec_call : tRel :: spec for decreasing arg is " +s (print_subterm_spec Σ rec_subterm_spec));;
           (** verify that it is a subterm *)
-          b_subt <-(check_is_subterm rec_subterm_spec recarg_tree);; 
-          if negb b_subt
+          if negb (check_is_subterm rec_subterm_spec recarg_tree)
           then 
             match z with 
             | SClosure z z' => raise $ GuardErr "check_rec_call" "illegal recursive call (could not ensure that argument is decreasing)"
@@ -1101,7 +1153,6 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
   trace "inductive_of_mutfix : leave";;
   (** return the list of inductives as well as the fixpoint bodies in their context *)
   ret (map fst rv : list inductive, map snd rv : list (context * term)).
-
 
 
 
