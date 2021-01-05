@@ -3,6 +3,7 @@ Open Scope string_scope.
 Require Import List String.
 Import ListNotations.
 Open Scope string_scope.
+Require Import MetaCoq.Template.utils.MCList.
 From MetaCoq.Guarded Require Import MCRTree Inductives guardchecker positivitychecker Except Trace.
 
 
@@ -42,7 +43,7 @@ Definition check_inductive_mib (Σ:global_env) (kn : kername) (mib : mutual_indu
   end.
 
 (** Positivity checker *)
-Definition check_inductive {A} (a : A) := 
+Definition check_inductive {A} (def : option ident) (a : A) := 
   mlet (Σ, t) <- tmQuoteRec a;;
   match t with
   | tInd ind _ => 
@@ -52,14 +53,23 @@ Definition check_inductive {A} (a : A) :=
           match l with 
           | None => ret tt
           | Some l => 
-              (*tmPrint l;;*)
-              tmPrint "passed positivity check"
+              tmPrint "passed positivity check";;
+              match def with 
+              | None => ret tt
+              | Some name => 
+                l <- tmEval cbn l;;
+                match nth_error l ind.(inductive_ind) with
+                | Some tree => 
+                    tmDefinitionRed_ false name None tree;;
+                    ret tt
+                | None => ret tt
+                end
+              end
           end
       | _ => ret tt
       end
   | _ => ret tt
   end.
-
 
 (** Compute paths_env *)
 (** Since the MC inductives representation does not include wf_paths, we first compute them via the positivity checker. The trees are carried around in an additional paths_env. *)

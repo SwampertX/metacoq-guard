@@ -4,6 +4,12 @@ Require Import List String.
 Import ListNotations.
 Open Scope string_scope.
 
+(* for printing of rtrees *)
+From MetaCoq.Template Require Import BasicAst.
+From MetaCoq.Guarded Require Import MCRTree Inductives.
+
+
+Set Positivity Checking. 
 
 Print Nat.sub.
 Fixpoint div (n m : nat) := 
@@ -27,6 +33,8 @@ MetaCoq Run (check_fix div).
 *)
 
 (** Example : lists *)
+MetaCoq Run (check_inductive (Some "list_tree") list). 
+Print list_tree. 
 (** 
 <<
                 Rec 0 
@@ -62,12 +70,13 @@ MetaCoq Run (check_fix div).
   
 
 (** Nested inductives need special attention: to correctly handle matches (and subterms) on elements of a nested inductive type we are doing recursion over, the inner inductive type's parameters need to be properly instantiated with the outer inductive type. This is in particular the case for the recursive arguments tree. *)
-(** Example: rose trees
-   [Inductive rtree (X : Type) := rnode (l : list (rtree X)).]
-   When we check a fixpoint which is structural over [r : rtree X] and (after matching) [r] ≃ [rnode l], 
+(** Example: rose trees *)
+   Inductive rtree (X : Type) := rnode (l : list (rtree X)).
+(* When we check a fixpoint which is structural over [r : rtree X] and (after matching) [r] ≃ [rnode l], 
     we want to be able to do recursive calls with elements of [l]. 
    In order to obtain this subterm information when matching on [l], the recargs tree for the [list] type is instantiated with [rtree] beforehand. 
-
+ *)
+(*
 <<
                 Rec 0 
                  | 
@@ -105,6 +114,8 @@ MetaCoq Run (check_fix div).
   >>
     
 *)
+MetaCoq Run (check_inductive (Some "rtree_tree") rtree). 
+Print rtree_tree. 
 
 
 (** When matching on a (loose) subterm of the recursive argument of a fixpoint, we can look in the recursive tree whether a
@@ -202,11 +213,7 @@ MetaCoq Run (check_fix count_cons_even).
 
 
 
-
 (** Rosetrees *)
-Inductive rtree (X : Type) := 
-  | rnode (children : list (rtree X)). 
-
 Fixpoint sumn (l : list nat) := List.fold_left (fun a b => a + b) l 0. 
 MetaCoq Run (check_fix sumn). 
 
@@ -215,7 +222,7 @@ Fixpoint rtree_size {X} (t : rtree X) :=
   match t with
   | rnode l => sumn (map rtree_size l)
   end.
-MetaCoq Run (check_inductive rtree). 
+MetaCoq Run (check_inductive None rtree). 
 MetaCoq Run (check_fix rtree_size). 
 
 Unset Guard Checking.
@@ -328,10 +335,114 @@ End ilist.
 
 (** * Positivity examples *)
 
-MetaCoq Run (check_inductive even).
+MetaCoq Run (check_inductive None even).
 
 Unset Positivity Checking.
 Inductive nonpos := 
   | nonposC (f : nonpos -> nat) : nonpos. 
 
-MetaCoq Run (check_inductive nonpos).
+MetaCoq Run (check_inductive None nonpos).
+
+
+(*Inductive AczelPP (X : Type) := *)
+  (*| node (f : X -> list (AczelPP X)). *)
+
+
+(** Trying to find out what wf_paths intersection does *)
+MetaCoq Run (check_inductive (Some "odd_tree") odd).
+MetaCoq Run (check_inductive (Some "even_tree") even).
+
+(* identity *)
+(*Compute (inter_wf_paths odd_tree odd_tree).*)
+(* tree of empty inductive type: Rec 0 [Node Norec []] *)
+(*Compute (inter_wf_paths odd_tree even_tree).*)
+
+(* empty inductive type tree *)
+(*Compute (inter_wf_paths list_tree rtree_tree).*)
+(* the list part of the rtree tree *)
+Definition listnested := 
+      Rec 0
+           [Node
+              (Imbr
+                 {|
+                 inductive_mind := (MPfile ["Datatypes"; "Init"; "Coq"],
+                                   "list");
+                 inductive_ind := 0 |})
+              [mk_node Norec []; mk_node Norec [Param 1 0; Param 0 0]]].
+(* None *)
+(*Compute (inter_wf_paths list_tree listnested).*)
+
+Definition nonrec_rtree := 
+Rec 0
+  [Node
+     (Mrec
+        {|
+        inductive_mind := (MPfile ["examples"; "Guarded"; "MetaCoq"],
+                          "rtree");
+        inductive_ind := 0 |})
+     [mk_node Norec
+        [mk_node Norec []]]].
+(* nonrec_rtree, so it removes the nested occurrence of list *)
+(*Compute (inter_wf_paths nonrec_rtree rtree_tree). *)
+
+
+(** ** Some examples that were incorrectly recognized as guarded until 2013 due to commutative cuts handling. *)
+
+(* https://sympa.inria.fr/sympa/arc/coq-club/2013-12/msg00119.html *)
+(*Set Guard Checking.*)
+
+(*Require Import ClassicalFacts.*)
+
+(*Section func_unit_discr.*)
+
+(*Hypothesis Heq : (False -> False) = True.*)
+
+(*Fixpoint contradiction (u : True) : False :=*)
+(*contradiction (*)
+(*match Heq in (eq _ T) return T with*)
+(*| eq_refl => fun f:False => match f with end*)
+(*end*)
+(*).*)
+
+(*End func_unit_discr.*)
+
+(*Lemma foo : provable_prop_extensionality -> False.*)
+(*Proof.*)
+(*intro; apply contradiction.*)
+(*apply H.*)
+(*trivial.*)
+(*trivial.*)
+(*Qed.*)
+
+
+
+(* https://sympa.inria.fr/sympa/arc/coq-club/2013-12/msg00155.html *)
+Require Import ClassicalFacts.
+
+Inductive True1 : Prop := I1 : True1
+with True2 : Prop := I2 : True1 -> True2.
+
+Section func_unit_discr.
+
+Hypothesis Heq : True1 = True2.
+
+Fixpoint contradiction (u : True2) : False :=
+contradiction (
+match u with
+| I2 Tr =>
+match Heq in (_ = T) return T with
+| eq_refl => Tr
+end
+end).
+
+End func_unit_discr.
+
+Lemma foo : provable_prop_extensionality -> False.
+Proof.
+intro; apply contradiction.
+etransitivity. apply H. constructor.
+symmetry. apply H. constructor. constructor.
+constructor. constructor.
+Qed.
+
+
