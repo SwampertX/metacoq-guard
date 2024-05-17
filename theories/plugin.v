@@ -1,9 +1,10 @@
-From MetaCoq.Template Require Import Environment Ast AstUtils All. 
+From MetaCoq.Common Require Import Environment.
+From MetaCoq.Template Require Import Ast AstUtils All.
 Open Scope string_scope.
 Require Import List String.
 Import ListNotations.
 Open Scope string_scope.
-Require Import MetaCoq.Template.utils.MCList.
+From MetaCoq.Utils Require Import MCList.
 From MetaCoq.Guarded Require Import MCRTree Inductives guardchecker positivitychecker Except Trace.
 
 
@@ -13,9 +14,9 @@ Definition list_iter {X} (f : X -> TemplateMonad unit) (l : list X) : TemplateMo
 
 
 (** Compute the wf_paths for the bodies of a mutual inductive (returns a list for the mutually defined types). *)
-Definition check_inductive_mib (Σ:global_env) (kn : kername) (mib : mutual_inductive_body) : TemplateMonad (option (list wf_paths)) := 
-  let cons_names := map (fun oib => map (fun '(name, _, _) => name) oib.(ind_ctors)) mib.(ind_bodies) in
-  let cons_types := map (fun oib => map (fun '(_, type, _) => type) oib.(ind_ctors)) mib.(ind_bodies) in
+Definition check_inductive_mib (Σ:global_env_ext) (kn : kername) (mib : mutual_inductive_body) : TemplateMonad (option (list wf_paths)) := 
+  let cons_names := map (fun oib => map cstr_name oib.(ind_ctors)) mib.(ind_bodies) in
+  let cons_types := map (fun oib => map cstr_type oib.(ind_ctors)) mib.(ind_bodies) in
 
   match mib.(ind_bodies) with 
   | oib :: _ => 
@@ -43,23 +44,24 @@ Definition check_inductive_mib (Σ:global_env) (kn : kername) (mib : mutual_indu
   end.
 
 (** Positivity checker *)
-Definition check_inductive {A} (def : option ident) (a : A) := 
-  mlet (Σ, t) <- tmQuoteRec a;;
+Definition check_inductive {A} (def : option ident) (a : A) : TemplateMonad unit := 
+  mlet '(Σ', t) <- tmQuoteRec a;;
+  let Σ := (Σ', Monomorphic_ctx) in
   match t with
   | tInd ind _ => 
       match lookup_mind_specif Σ ind with 
-      | (_, _, _, inl (mib, oib)) => 
+      | (_, _, _, inl (mib, oib)) =>
           l <- check_inductive_mib Σ ind.(inductive_mind) mib;;
-          match l with 
+          match l with
           | None => ret tt
-          | Some l => 
+          | Some l =>
               tmPrint "passed positivity check";;
-              match def with 
+              match def with
               | None => ret tt
-              | Some name => 
+              | Some name =>
                 l <- tmEval cbn l;;
                 match nth_error l ind.(inductive_ind) with
-                | Some tree => 
+                | Some tree =>
                     tmDefinitionRed_ false name None tree;;
                     ret tt
                 | None => ret tt
@@ -73,7 +75,7 @@ Definition check_inductive {A} (def : option ident) (a : A) :=
 
 (** Compute paths_env *)
 (** Since the MC inductives representation does not include wf_paths, we first compute them via the positivity checker. The trees are carried around in an additional paths_env. *)
-Fixpoint compute_paths_env Σ0 Σ := 
+Fixpoint compute_paths_env Σ0 Σ : TemplateMonad (list (kername * (list wf_paths))):= 
   match Σ with
   | [] => ret []
   | (kn, InductiveDecl mib) :: Σ' => 
@@ -92,7 +94,7 @@ Fixpoint compute_paths_env Σ0 Σ :=
 (* needed for the const unfolding case for demonstrational purposes *)
 Unset Guard Checking. 
 Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t} := 
-  match t with 
+  match t with
   | tFix mfix _ => 
       (** we should first recursively check the body of the fix (in case of nested fixpoints!) *)
       let mfix_ctx := push_assumptions_context (mfix_names mfix, mfix_types mfix) Γ in
@@ -102,7 +104,7 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
       (*tmPrint Γ;;*)
 
       (* NOTE : uncomment if using trace monad *)
-      match (check_fix Σ ρ Γ mfix) with
+      match (check_fix  (Σ, Monomorphic_ctx) ρ Γ mfix) with
       | (_, trace, inr e) => 
           (*trace <- tmEval cbn trace;;*)
           e <- tmEval cbn e;;
@@ -143,9 +145,9 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
       _ <- check_fix_term Σ ρ (Γ ,, vdef na b t) b';;
       ret tt
   | tCase ind rtf discriminant brs =>
-    _ <- check_fix_term Σ ρ Γ rtf;;
+    _ <- check_fix_term Σ ρ Γ rtf.(preturn );;
     _ <- check_fix_term Σ ρ Γ discriminant;;
-    _ <- list_iter (fun '(_, b) => check_fix_term Σ ρ Γ b) brs;;
+    _ <- list_iter (fun '(mk_branch _ b) => check_fix_term Σ ρ Γ b) brs;;
     ret tt
   | tProj _ C => 
       _ <- check_fix_term Σ ρ Γ C;;
@@ -153,7 +155,7 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
   | tConst kn u => 
       (* NOTE: this is just done for demonstrational purposes for things we have to extract from the global env. 
       Normally, we would not check things which are already in the global env, as they should already have been checked. *)
-      match lookup_env_const Σ kn with 
+      match lookup_env_const (Σ, Monomorphic_ctx) kn with 
       | Some const => 
           match const.(cst_body) with 
           | Some t => check_fix_term Σ ρ Γ t
@@ -173,10 +175,10 @@ Set Guard Checking.
 
 Definition check_fix {A} (a : A) :=
   mlet (Σ, t) <- tmQuoteRec a ;;
-  paths_env <- compute_paths_env Σ Σ;;
+  paths_env <- compute_paths_env (Σ, Monomorphic_ctx) Σ.(declarations);;
   t <- match t with 
        | tConst kn u => 
-          match lookup_env_const Σ kn with 
+          match lookup_env_const (Σ, Monomorphic_ctx) kn with 
           | Some const => 
               match const.(cst_body) with 
               | Some t => ret t

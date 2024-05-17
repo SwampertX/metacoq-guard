@@ -1,4 +1,4 @@
-From MetaCoq.Template Require Import utils.
+From MetaCoq.Utils Require Import utils.
 Require Import MetaCoq.Guarded.Except.
 
 Definition map2_i { A B C} (f : nat -> A -> B -> C) (a : list A) (b : list B) := 

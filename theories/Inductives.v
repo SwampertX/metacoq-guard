@@ -1,7 +1,9 @@
-From MetaCoq.Guarded Require Import printers.
-From MetaCoq.Checker Require Import Checker. 
-From MetaCoq.Template Require Import utils BasicAst Ast AstUtils.
-From MetaCoq.Template Require Import Universes Environment Reflect LiftSubst. 
+(* From MetaCoq.Guarded Require Import printers.  *)
+From MetaCoq.Template Require Import Checker. 
+From MetaCoq.Utils Require Import utils.
+From MetaCoq.Common Require Import BasicAst Universes Environment Reflect.
+From MetaCoq.Template Require Import Ast AstUtils.
+From MetaCoq.Template Require Import LiftSubst Pretty.
 From MetaCoq.Guarded Require Import MCRTree. 
 
 From MetaCoq.Guarded Require Export Except util.
@@ -61,7 +63,7 @@ Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr.
 (*Arguments unwrap { _ _ _ _}. *)
 
 
-Notation "a == b" := (eqb a b) (at level 90) : exc_scope. 
+Notation "a == b" := (eqb a b) (at level 70) : exc_scope. 
 Notation "a != b" := (negb(a==b)) (at level 90) : exc_scope.
 
 (** As the guardedness checker reduces terms at many places before reducing, the key functions are not structurally recursive. 
@@ -89,16 +91,99 @@ Definition constr_result_num_uniform (ctx : context) (num_pars : nat) (app : lis
     end
   in check_args app.
 
+Definition mind_specif := mutual_inductive_body * one_inductive_body.
+
+(* In Coq kernel speak, an arity is the type of an inductive without the parameters (i.e. what comes after the colon when writing down the inductive) *)
+Record inductive_arity := {
+    ind_user_arity : term; (* the full arity *)
+    ind_sort : sort        (* just the sort *)
+  }.
+
+Fixpoint ind_get_sort (arity : term) : sort := 
+  match arity with 
+  | tSort s => s
+  | tLetIn _ _ _ t => ind_get_sort t
+  | tProd _ _ t => ind_get_sort t
+  | _ => sProp
+  end.
+
+(* decompose a term prefixed by prods/lets into the context given by the declarations and the remaining term *)
+Definition decompose_let_prod_env (t : term) : context * term := 
+  let decomp := fix decomp (t : term) (acc : context) := 
+      match t with 
+      | tProd na ty t => 
+          decomp t (mkdecl na None ty :: acc)
+      | tLetIn na def ty t => 
+          decomp t (mkdecl na (Some def) ty :: acc)
+      | _ => (acc, t)
+      end
+  in decomp t []. 
+
+
+Fixpoint decompose_prod_n (t : term) (n : nat) : (list aname * list term) * term := 
+  match n with 
+  | 0 => ([], [], t)
+  | S n => 
+      match t with 
+      | tProd na A B => let (nAs, B) := decompose_prod_n B n in
+                        let (ns, As) := nAs in
+                        (na :: ns, A :: As, B)
+      | _ => ([],[], t)
+      end
+  end.
+(* decompose the type of an inductive into the parameter context (parameters) and the arity *)
+Definition decompose_arity (t : term) (nparams : nat) : context * inductive_arity.
+  pose (typ := decompose_prod_n t nparams).
+  destruct typ as [[names types] ar].
+  apply (List.firstn nparams) in names.
+  apply (List.firstn nparams) in types.
+  split.
+  refine (List.rev (map (fun '(x, ty) => vass x ty) (combine names types))). 
+  constructor.
+  exact ar. exact (ind_get_sort ar). 
+Defined.
+
+(** Arity sort and original user arity Ui*)
+Definition ind_arity (i : mind_specif) := 
+  let (mib, oib) := i in 
+  snd (decompose_arity (oib.(ind_type)) mib.(ind_npars)). 
+Definition param_ctxt (i : mind_specif) := 
+  let (mib, oib) := i in 
+  fst (decompose_arity (oib.(ind_type)) mib.(ind_npars)). 
+
+Definition user_arity_ctxt (user_arity : term) := 
+  fst (decompose_let_prod_env user_arity).
+
+(** Arity context of [Ii] with parameters: [forall params, Ui] *)
+(* NOTE: does also contain lets and indices! *)
+Definition ind_arity_ctxt (i : mind_specif) := 
+  let (mib, oib) := i in 
+  let (param_ctx, ar) := (decompose_arity oib.(ind_type) mib.(ind_npars)) in
+  (user_arity_ctxt (ar.(ind_user_arity))) ++ param_ctx. 
+
+(** Names of the constructors: [cij] *)
+Definition ind_consnames (i : mind_specif) := 
+  map cstr_name (snd i).(ind_ctors). 
+
+(** Types of the constructors with parameters:  [forall params, Tij],
+     where the Ik are replaced by de Bruijn index in the
+     context I1:forall params, U1 ..  In:forall params, Un *)
+Definition ind_user_lc (i : mind_specif) : list term := 
+  map cstr_type (snd i).(ind_ctors).
+
+
+Definition ind_ctors_hnf (i : mind_specif) := map (fun t => decompose_let_prod_env t) (ind_user_lc i).
+
 (** Compute the number of parameters which can at most be uniform for an inductive. *)
-Definition one_inductive_num_uniform (i : mind_specif) := 
+Definition one_inductive_num_uniform (i : mind_specif) :=
   let ctors_hnf := ind_ctors_hnf i in
   let num_pars := (fst i).(ind_npars) in
-  let one_constr '(ctx, con) := 
+  let one_constr '(ctx, con) :=
     match con with
     | tApp _ app => constr_result_num_uniform ctx num_pars app
     | _ => 0
     end in
-  List.fold_left (fun acc c => min acc (one_constr c)) ctors_hnf num_pars. 
+  List.fold_left (fun acc c => min acc (one_constr c)) ctors_hnf num_pars.
 
 
 (** Computes the number of uniform parameters of the mutual inductive definition [i]. 
@@ -112,12 +197,16 @@ Definition num_uniform_params (mib : mutual_inductive_body) : nat :=
 
 
 
-Implicit Types (Σ : global_env) (Γ : context). 
+Implicit Types (Σ : global_env_ext) (Γ : context). 
 Implicit Types (kn : kername) (c: term).
+
+Open Scope bs.
+
+Definition ctx_names Γ : list ident := [].
 
 (** ** Reduction and Environment Handling *)
 Definition whd_all Σ Γ t : exc term := 
-  except (OtherErr "whd_all" ("reduction error or out of fuel " +s bruijn_print Σ Γ t)) $ reduce_stack_term RedFlags.default Σ Γ default_fuel t. 
+  except (OtherErr "whd_all" ("reduction error or out of fuel " ++ print_term Σ (ctx_names Γ) true t)) $ reduce_stack_term RedFlags.default Σ Γ default_fuel t. 
 
 (** β, ι, ζ weak-head reduction *)
 Definition whd_βιζ Σ Γ t : exc term := 
@@ -323,14 +412,13 @@ Definition fold_term_with_binders {X Y}(g : X -> X) (f : X -> Y -> term -> Y) (n
   | tApp c l => List.fold_left (f n) l (f n acc c)
   | tProj _ c => f n acc c
   | tEvar _ l => List.fold_left (f n) l acc
-  | tCase _ p c bl => List.fold_left (fun acc '(_, t) => f n acc t) bl (f n (f n acc p) c)
+  | tCase _ p c bl => List.fold_left (fun acc '(mk_branch _ t) => f n acc t) bl (f n (f n acc p.(preturn)) c)
   | tFix mfix nb | tCoFix mfix nb => 
       let n' := Nat.iter (length mfix) g n in (* the length mfix binders for the fixes are introduced *)
       let types_and_bodies := map2 (fun a b => (a, b)) (mfix_types mfix) (mfix_bodies mfix) in 
       List.fold_left (fun acc '(type, body) => f n' (f n acc type) body) types_and_bodies acc
+  | prim => acc
   end.
-
-
 
 (** check if a de Bruijn index in range 
     n ... n + num -1 
@@ -435,9 +523,11 @@ Definition equal_wf_paths a b :=
 
 Definition mk_norec := mk_node Norec []. 
 
-(** Given a recargs tree [t] representing for an inductive, get a list of trees for the arguments of the constructors. *)
+(** Given a recargs tree [t] representing an inductive type, returns a list of
+list of trees. Each inner list corresponds to a constructor of [t], and has
+a tree for every argument of the constructor. (edit: clarity) *)
 Definition wf_paths_constr_args_sizes t : exc (list (list wf_paths)) := 
-  destruct_node t (fun ra constrs => 
+  destruct_node t (fun ra constrs => (** YJ: constrs = constructors not constraints :sweat_smile: *)
     assert (match ra with Norec => false | _ => true end) $ ProgrammingErr "wf_paths_constr_args_sizes" "should not be called with Norec";;
     l <- unwrap $ map (fun t => destruct_node t (fun _ args => ret args) (raise $ ProgrammingErr "wf_paths_constr_args_sizes" "expected node")) 
       constrs;;
@@ -455,7 +545,7 @@ Definition mk_ind_paths rarg constr_arg_trees : wf_paths :=
 (** We don't care about the exact universe as this is only relevant for checking guardedness -- it only needs to reduce afterwards *)
 Definition lam_implicit_lift n t := 
   let anon := mkBindAnn nAnon Relevant in
-  let some_sort := tSort (Universe.make (Level.Level "guarded_implicit")) in 
+  let some_sort := tSort (sType (Universe.make (Level.level "guarded_implicit", 0))) in 
   let lambda_implicit t := tLambda anon some_sort t in 
   Nat.iter n lambda_implicit (lift0 n t). 
 

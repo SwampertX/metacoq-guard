@@ -1,7 +1,8 @@
-From MetaCoq.Guarded Require Import printers.
-From MetaCoq.Checker Require Import Checker. 
-From MetaCoq.Template Require Import utils BasicAst Ast AstUtils.
-From MetaCoq.Template Require Import Universes Environment Reflect LiftSubst. 
+From MetaCoq.Template Require Import Checker. 
+From MetaCoq.Utils Require Import utils.
+From MetaCoq.Common Require Import BasicAst Universes Environment Reflect.
+From MetaCoq.Template Require Import Ast AstUtils.
+From MetaCoq.Template Require Import LiftSubst Pretty.
 From MetaCoq.Guarded Require Import MCRTree. 
 
 From MetaCoq.Guarded Require Import Except util Trace Inductives.
@@ -9,6 +10,7 @@ From MetaCoq.Guarded Require Import Except util Trace Inductives.
 (* non-recursive arguments = indices
   non-uniform = non-uniform 
 *)
+Open Scope list.
 
 Unset Guard Checking.
 
@@ -16,14 +18,14 @@ Section checker.
   (* if [checkpos] is false, then positivity is assumed and we still attempt to compute the rectree *)
   Context (checkpos : bool).
 
-  Implicit Types (Σ : global_env) (Γ : context).
+  Implicit Types (Σ : global_env_ext) (Γ : context).
 
   (* recargs env *)
   Definition raEnv := list (recarg * wf_paths).
   (* inductive env: [(Γ, n, ntypes, ra_env)] where
       [Γ] is the dB context
       [n] is the dB index of the last inductive type of this block 
-      [ntypes] is the number of inductive types.
+      [ntypes] is the number of inductive types (number of mutual clauses).
       [ra_env] is the list of recursive trees + recarg info for each element of the context
    *)
   Definition iEnv := context * nat * nat * raEnv.
@@ -95,6 +97,7 @@ Section checker.
     c_whd <- whd_all Σ Γ c;;
     let '(x, args) := decompose_app c_whd in 
     match x with 
+    (* bullet 3 *)
     | tProd na ty body => 
         assert (args == []) (OtherErr "check_positivity" "constructor arg is ill-typed");; 
         (** If one of the inductives of the mutually inductive block occurs in the left-hand side of a product, then such an occurrence is a non-strictly positive recursive call.
@@ -112,6 +115,7 @@ Section checker.
     | tRel k => 
       (* check if k is contained in the ra_env *)
       match nth_error ra_env k with 
+    (* bullet 2 *)
       | Some (ra, rt) => 
           (* we have a tree and recarg info for k *)
 
@@ -124,10 +128,12 @@ Section checker.
           else 
             (** just return the tree we have in the env *)
             ret rt
+    (* bullet 1 *)
       | None => 
           (* if it is not, this refers to something outside the inductive decl and is non-recursive *)
           ret mk_norec
       end 
+    (* nested case *)
     | tInd nested_ind _ => 
         (** check if one of the inductives of the mutually inductive block appears in the parameters *) 
         if existsb (rel_range_occurs first_ind ntypes) args 
@@ -169,7 +175,7 @@ Section checker.
     let '(Γ', _, _ , _) := ienv' in
 
     (** get constructor types (with parameters), assuming that the mutual inductives are at [0]...[nested_ntypes-1]*)
-    let constrs := map (fun '((_, c), _) => c) oib.(ind_ctors) in
+    let constrs := map cstr_type oib.(ind_ctors) in
     (** abstract the parameters of the recursive occurrences of the inductive type in the constructor types *)
     (** we assume that at indices [0]... [nested_ntypes-1], the inductive types are instantiated _with_ the parameters *)
     let abstracted_constrs := abstract_params_mind_constrs nested_ntypes num_unif_params constrs in

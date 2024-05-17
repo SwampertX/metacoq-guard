@@ -1,12 +1,20 @@
 Require Import MetaCoq.Guarded.plugin. 
 
-Require Import List String.
+Require Import List.
 Import ListNotations.
-Open Scope string_scope.
 
 (* for printing of rtrees *)
-From MetaCoq.Template Require Import BasicAst.
+From MetaCoq Require Import Common.BasicAst Utils.bytestring.
 From MetaCoq.Guarded Require Import MCRTree Inductives.
+
+Set Primitive Projections.
+Record r := mk_r { r_f1 : nat ; r_f2 : nat }.
+MetaCoq Quote Definition r_syntax := Eval compute in r.
+Print r_syntax. (* tInd *)
+MetaCoq Quote Definition r_f1_syntax := Eval compute in r_f1.
+Print r_f1_syntax. (* tLambda with a tCase body *)
+Definition a := mk_r 1 2.
+MetaCoq Test Quote (a.(r_f1)).
 
 
 Set Positivity Checking. 
@@ -29,13 +37,21 @@ MetaCoq Run (check_fix div).
   The main data structure it works off are regular trees/recursive trees.
   These are computed for every inductive type by the Coq kernel's positivity checker. 
   Essentially, they capture the recursive structure of inductive types. 
-  (more precisely, they describe all "well-founded paths", i.e. all paths of how an inhabitant of the inductive type can be constructed -- the positivity checker makes sure that there are no infinite "unguarded" paths)
+  (more precisely, they describe all "well-founded paths", i.e. all paths of how
+  an inhabitant of the inductive type can be constructed -- the positivity checker
+  makes sure that there are no infinite "unguarded" paths)
 *)
 
 (** Example : lists *)
 MetaCoq Run (check_inductive (Some "list_tree") list). 
 Print list_tree. 
 (** 
+
+Inductive list (X : Type) :=
+| nil : list X
+| cons : X -> list X -> list X. 
+
+corresponds to
 <<
                 Rec 0 
                  | 
@@ -49,25 +65,39 @@ Print list_tree.
                         Node Norec    Param 0 0
   >>
 
-  A recursive tree always contains the trees for a whole mutual inductive block (to account for recursive occurrences).
-  The top-level node is a [Rec n], having children for each of the mutually defined types, and describing the recursive structure for the [n]-th type (starting at 0) of this block.
+A recursive tree always contains the trees for a whole mutual inductive block
+(to account for recursive occurrences). The top-level node is a [Rec n], having
+children for each of the mutually defined types, and describing the recursive
+structure for the [n]-th type (starting at 0) of this block.
 
-  For lists, there is exactly one mutually inductive block.
+For lists, there is exactly one mutually inductive block.
 
-  Each of the node for the mutually defined types is annotated with the name of the inductive and has children for each of the constructors.
-  The nodes for the constructors are not annotated with anything useful, the Norec does not mean anything. 
+Each of the node for the mutually defined types is annotated with the name of
+the inductive and has children for each of the constructors. The nodes for the
+constructors are not annotated with anything useful, the Norec does not mean
+anything.
 
-  Each of the nodes for the constructors has children for each of the non-parametric arguments. 
-  The [nil] constructor obviously has no children. 
-  The [cons] constructor has two children. 
-    
-  The nodes for the arguments are [Norec] if their type does not involve one of the mutually defined types.
-  They are [Param i j] for recursive occurrences of types.
-  The index [i] refers to the number of [Rec]s up in the tree this refers to (in de Bruijn style). 
-    (this can only be non-zero with nested inductives) 
-  The index [j] refers to the index of the inductive type in the corresponding block of mutual inductives. 
-*)
-  
+Each of the nodes for the constructors has children for each of the
+non-parametric arguments. The [nil] constructor obviously has no children. The
+[cons] constructor has two children.
+
+The nodes for the arguments are [Norec] if their type does not involve one of
+the mutually defined types. They are [Param i j] for recursive occurrences of
+types. The index [i] refers to the number of [Rec]s up in the tree this refers
+to (in de Bruijn style). (this can only be non-zero with nested inductives) The
+index [j] refers to the index of the inductive type in the corresponding block
+of mutual inductives. *)
+
+(* clearly not strictly? positive *)
+Inductive bad1 : Set := bad1C : bad1 -> bad1.
+(* test mutual *)
+(* Unset Positivity Checking. *)
+Inductive A : Set := A1 : B -> B -> A
+with B : Set := B1 : A -> B
+with C : Set := C1 : C -> C.
+
+MetaCoq Run (check_inductive (Some "B_tree") B).
+Print B_tree.
 
 (** Nested inductives need special attention: to correctly handle matches (and subterms) on elements of a nested inductive type we are doing recursion over, the inner inductive type's parameters need to be properly instantiated with the outer inductive type. This is in particular the case for the recursive arguments tree. *)
 (** Example: rose trees *)
@@ -147,10 +177,11 @@ MetaCoq Run (check_fix abc).
 *)
 
 (** Notably, the guardedness checker reduces at MANY intermediate points: *)
-Fixpoint haha_this_is_ridiculous (n : nat) := 
+Unset Guard Checking.
+Fixpoint haha_this_is_ridiculous (n : nat) :=
   let _ := haha_this_is_ridiculous n in 0. 
 MetaCoq Run (check_fix haha_this_is_ridiculous). 
-
+Set Guard Checking.
 
 (** For more details, we refer to the comments in the implementation. *)
 
@@ -223,7 +254,7 @@ Fixpoint rtree_size {X} (t : rtree X) :=
   | rnode l => sumn (map rtree_size l)
   end.
 MetaCoq Run (check_inductive None rtree). 
-MetaCoq Run (check_fix rtree_size). 
+MetaCoq Run (check_fix (@rtree_size)). 
 
 Unset Guard Checking.
 (* I feel a little bad about lying to Coq about the structural argument, but whatever *)
@@ -231,7 +262,7 @@ Fixpoint rtree_size_broken {X} (t : rtree X) {struct t} :=
   match t with
   | rnode l => sumn (map (fun _ => rtree_size_broken t) l)
   end.
-MetaCoq Run (check_fix rtree_size_broken). 
+MetaCoq Run (check_fix (@rtree_size_broken)). 
 
 Fixpoint test (l : list nat) := 
   match l with
@@ -242,7 +273,7 @@ MetaCoq Run (check_fix test).
 
 
 
-Section wo.
+Module wo.
   Variable p: nat -> Prop.
   Variable p_dec: forall n, (p n) + ~(p n).
 
@@ -288,7 +319,7 @@ match l with
 | a :: l => (B a) * (ilist l)
 end.
 
-MetaCoq Run (check_fix ilist).
+MetaCoq Run (check_fix (@ilist)).
 
 Definition icons (a : A) {n} {l : Vector.t A n} (b : B a) (il : ilist l) : ilist (a :: l) := pair b il.
 
@@ -328,7 +359,7 @@ Fixpoint ith {m : nat} {As : Vector.t A m} (il : ilist As) (n : Fin.t m) {struct
   @ ith_body (@ ith) m As il n.
 
 (* TODO: broken *)
-MetaCoq Run (check_fix ith).
+MetaCoq Run (check_fix (@ith)).
 
 End ilist.
 
@@ -383,26 +414,24 @@ Rec 0
      [mk_node Norec
         [mk_node Norec []]]].
 (* nonrec_rtree, so it removes the nested occurrence of list *)
-(*Compute (inter_wf_paths nonrec_rtree rtree_tree). *)
+(* Compute (inter_wf_paths nonrec_rtree rtree_tree). *)
 
 
-(** ** Some examples that were incorrectly recognized as guarded until 2013 due to commutative cuts handling. *)
+(* * ** Some examples that were incorrectly recognized as guarded until 2013 due to commutative cuts handling. *)
 
 (* https://sympa.inria.fr/sympa/arc/coq-club/2013-12/msg00119.html *)
-(*Set Guard Checking.*)
+(* Set Guard Checking.
 
-(*Require Import ClassicalFacts.*)
+Require Import ClassicalFacts. *)
 
-(*Section func_unit_discr.*)
+(* Section func_unit_discr.
 
-(*Hypothesis Heq : (False -> False) = True.*)
+Hypothesis Heq : (False -> False) = True. *)
 
-(*Fixpoint contradiction (u : True) : False :=*)
-(*contradiction (*)
-(*match Heq in (eq _ T) return T with*)
-(*| eq_refl => fun f:False => match f with end*)
-(*end*)
-(*).*)
+(* Fixpoint contradiction (u : True) : False :=
+match Heq in (eq _ T) return T with
+| eq_refl => fun f:False => match f with end
+end. *)
 
 (*End func_unit_discr.*)
 
@@ -415,7 +444,7 @@ Rec 0
 (*Qed.*)
 
 
-
+(* 
 (* https://sympa.inria.fr/sympa/arc/coq-club/2013-12/msg00155.html *)
 Require Import ClassicalFacts.
 
@@ -443,6 +472,4 @@ intro; apply contradiction.
 etransitivity. apply H. constructor.
 symmetry. apply H. constructor. constructor.
 constructor. constructor.
-Qed.
-
-
+Qed. *)
