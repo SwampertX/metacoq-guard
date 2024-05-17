@@ -37,3 +37,6 @@ jobs:
               make
             endGroup
           script: 
+          after_install:
+          after_script:
+          uninstall:
