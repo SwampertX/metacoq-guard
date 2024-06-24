@@ -34,12 +34,12 @@ Implicit Types (Σ : global_env_ext) (Γ : context) (ρ : pathsEnv).
 (** Environments annotated with marks on recursive arguments *)
 
 (** proper subterm (strict) or loose subterm (may be equal to the recursive argument, i.e. not a proper subterm) *)
-Inductive size := Loose | Strict. 
-(* induces a lattice with Loose < Strict *)
+Inductive size := Large | Strict. 
+(* induces a lattice with Large < Strict *)
 
 Definition size_eqb (s1 s2 : size) := 
   match s1, s2 with 
-  | Loose, Loose => true
+  | Large, Large => true
   | Strict, Strict => true
   | _, _ => false
   end.
@@ -53,9 +53,19 @@ Defined.
 Definition size_glb s1 s2 := 
   match s1, s2 with 
   | Strict, Strict => Strict
-  | _, _ => Loose
+  | _, _ => Large
   end.
 
+
+(* Set Default Goal Selector "all". *)
+Module Natset := MSetAVL.Make Nat.
+(* Instance reflect_natset : ReflectEq Natset.t.
+Proof.
+  refine {| eqb := Natset.equal |}.
+  intros [t1 t1o]. induction t1.
+  intros [t2 t2o]. induction t2.
+  cbn.
+  - destruct t1o. constructor. *)
 (** possible specifications for a term:
    - Not_subterm: when the size of a term is not related to the recursive argument of the fixpoint
    - Subterm: when the term is a subterm of the recursive argument
@@ -65,16 +75,20 @@ Definition size_glb s1 s2 :=
    - Dead_code: when the term has been built by elimination over an empty type. Is also used for evars.
  *) 
 Inductive subterm_spec := 
-  | Subterm (s : size) (r : wf_paths)
+  | Subterm (l : Natset.t) (s : size) (r : wf_paths)
   | Dead_code
-  | Not_subterm. 
+  | Not_subterm
+  | Internally_bound_subterm (l : Natset.t). 
+
 
 Definition subterm_spec_eqb (s1 s2 : subterm_spec) := 
   match s1, s2 with
   | Dead_code, Dead_code => true
   | Not_subterm, Not_subterm => true
-  | Subterm size1 tree1, Subterm size2 tree2 => 
-      (size1 == size2) && (tree1 == tree2)
+  | Subterm l1 size1 tree1, Subterm l2 size2 tree2 => 
+      (l1 == l2) && (size1 == size2) && (tree1 == tree2)
+  | Internally_bound_subterm l1, Internally_bound_subterm l2 =>
+      (l1 == l2)
   | _, _ => false
   end.
 Instance reflect_subterm_spec : ReflectEq subterm_spec.
@@ -104,22 +118,28 @@ Fixpoint print_wf_paths Σ (t : wf_paths) :=
 
 Definition print_size s := 
   match s with
-  | Loose => "Loose"
+  | Large => "Large"
   | Strict => "Strict"
   end.
 
+(** FIXME *)
 Definition print_subterm_spec Σ (s : subterm_spec) :=
   match s with 
-  | Subterm s paths => "Subterm " ++ print_size s ++ " (" ++ print_wf_paths Σ paths ++ ")"
+  | Subterm l s paths => "Subterm " ++ print_size s ++ " (" ++ print_wf_paths Σ paths ++ ")"
   | Dead_code => "Dead_code"
   | Not_subterm => "Not_subterm"
+  | Internally_bound_subterm l => ""
   end.
 
 
 (** Given a tree specifying the recursive structure of a term, generate a subterm spec. *)
 (** (used e.g. when matching on an element of inductive type) *)
 Definition spec_of_tree t : exc subterm_spec:= 
-  if eq_wf_paths t mk_norec then ret $ Not_subterm else ret $ Subterm Strict t.
+  if eq_wf_paths t mk_norec
+  then ret $ Not_subterm
+  else ret $ Subterm Natset.empty Strict t.
+
+Definition merge_internal_subterms l1 l2 := Natset.union l1 l2.
 
 (** Intersection of subterm specs. 
    Main use: when determining the subterm info for a match, we take the glb of the subterm infos for the branches.
@@ -135,21 +155,24 @@ Definition spec_of_tree t : exc subterm_spec:=
     In the above case, the first branch would get spec [Dead_code] and the second one a [Subterm]. 
     The full match is then a [Subterm].
 *)
-Definition subterm_spec_glb2 s1 s2 : exc subterm_spec := 
+Definition inter_spec s1 s2 : exc subterm_spec := 
   match s1, s2 with 
   | _, Dead_code => ret s1
   | Dead_code, _ => ret s2
   | Not_subterm, _ => ret s1
   | _, Not_subterm => ret s2
-  | Subterm a1 t1, Subterm a2 t2 => 
-      inter <- except (OtherErr "subterm_spec_glb2" "inter_wf_paths failed: empty intersection") $ inter_wf_paths t1 t2;;
-      ret $ Subterm (size_glb a1 a2) inter
+  | Internally_bound_subterm l1, Internally_bound_subterm l2 => ret (Internally_bound_subterm (merge_internal_subterms l1 l2))
+  | Subterm l1 a1 t1, Internally_bound_subterm l2 => ret (Subterm (merge_internal_subterms l1 l2) a1 t1)
+  | Internally_bound_subterm l1, Subterm l2 a2 t2 => ret (Subterm (merge_internal_subterms l1 l2) a2 t2)
+  | Subterm l1 a1 t1, Subterm l2 a2 t2 =>
+      inter <- except (OtherErr "inter_spec" "inter_wf_paths failed: empty intersection") $ inter_wf_paths t1 t2;;
+      ret $ Subterm (merge_internal_subterms l1 l2) (size_glb a1 a2) inter
   end.
 
 (** Greatest lower bound of a list of subterm specs. *)
 (** Important: the neutral element is [Dead_code] -- for matches over empty types, we thus get [Dead_code]. *)
 Definition subterm_spec_glb (sl : list subterm_spec) : exc subterm_spec := 
-  List.fold_left (fun acc s => acc <- acc;; subterm_spec_glb2 acc s) sl (ret Dead_code). 
+  List.fold_left (fun acc s => acc <- acc;; inter_spec acc s) sl (ret Dead_code). 
 
 (** *** Guard env *)
 
@@ -181,6 +204,7 @@ Implicit Type (G : guard_env).
 (* YJ: again, the shape is [recarg; ... ; arg1; fixk; ... fix1]
 so [rel_min_fix] being [1+recarg_pos] makes sense.
 *)
+(* Counterpart: [make_renv] *)
 Definition init_guard_env Γ recarg tree :=
   {| 
     loc_env := Γ;
@@ -188,11 +212,13 @@ Definition init_guard_env Γ recarg tree :=
        Rel recarg -> first "proper" (non-recursive) argument,
        Rel (S recarg) -> last fixpoint in this block YJ: look at check_fix
     *)
-    rel_min_fix := 1 + recarg;
-    guarded_env := [Subterm Loose tree] (* YJ : FIXME why is this of length 1? *)
+    rel_min_fix := 2 + recarg; (** TODO YJ: why the current version is 2 instead of 1? *)
+    guarded_env := [Subterm Natset.empty Large tree] 
+    (* YJ : the single element corresponds to the head of [loc_env], ie the recursive argument *)
   |}.
 
 (** Push a binder with name [na], type [type] and subterm specification [spec] *)
+(* Counterpart: [push_var, push_let] *)
 Definition push_guard_env G '(na, type, spec) := 
   {|
     loc_env := G.(loc_env) ,, vass na type;
@@ -201,10 +227,12 @@ Definition push_guard_env G '(na, type, spec) :=
   |}.
 
 (** add a new inner variable which is not a subterm *)
+(* Shorthand, no counterpart *)
 Definition push_nonrec_guard_env G '(na, type) := 
   push_guard_env G (na, type, Not_subterm).
 
 (** Update the subterm spec of dB [i] to [new_spec] *)
+(* Counterpart: [assign_var_spec] *)
 Definition update_guard_spec G i new_spec := 
   {| 
     loc_env := G.(loc_env);
@@ -213,10 +241,11 @@ Definition update_guard_spec G i new_spec :=
   |}.
 
 (** YJ: is it safe to None => Not_subterm since initialization yields
-  G.guarded_env := [Subterm Loose tree] ?
+  G.guarded_env := [Subterm Large tree] ?
   - First thought: probably okay since we "split" the fixpoint s.t. recarg
     has dB index = 0. Any index greater than that is not a recarg for sure. *)
 (** lookup subterm information for de Bruijn index [p] *)
+(* Counterpart: [subterm_var] *)
 Definition lookup_subterm G p := 
   match nth_error G.(guarded_env) p with 
   | Some spec => spec
@@ -224,6 +253,7 @@ Definition lookup_subterm G p :=
   end.
 
 (** push a local context as [Not_subterm]s *)
+(* Counterpart: [push_ctxt_renv] *)
 Definition push_context_guard_env G Γ := 
   let n := length Γ in 
   {| 
@@ -233,6 +263,7 @@ Definition push_context_guard_env G Γ :=
   |}. 
 
 (** push fixes to the guard env as [Not_subterm]s *)
+(* Counterpart: [push_fix_renv] *)
 Definition push_fix_guard_env G (mfix : mfixpoint term) := 
   let n := length mfix in
   {|
@@ -306,26 +337,76 @@ Definition push_fix_guard_env G (mfix : mfixpoint term) :=
   See https://sympa.inria.fr/sympa/arc/coq-club/2013-12/msg00119.html.
 *)
 
+(** TODO YJ: what do the parameters mean? *)
+Inductive fix_guard_error :=
+  | NotEnoughAbstractionInFixBody
+  | RecursionNotOnInductiveType : term -> fix_guard_error
+  | RecursionOnIllegalTerm : nat -> (context * term) -> (list nat * list nat) -> fix_guard_error
+  | NotEnoughArgumentsForFixCall : nat -> fix_guard_error
+  | FixpointOnIrrelevantInductive.
+
+Inductive fix_check_result :=
+  | NeedReduce (Γ : context) (e : fix_guard_error)
+  | NoNeedReduce.
+
 Inductive stack_element := 
-  | SClosure G (t : term)
+  (* Arguments in the evaluation stack.
+    [t] is typed in [G]
+    [nbinders] is the number of binders added in the current env on top of [G.genv]
+    TODO [r] denotes if reduction is needed.
+    *)
+  | SClosure (r : fix_check_result) G (nbinders : nat) (t : term)
+  (* arguments applied to a "match": only their spec flows through the match *)
   | SArg (s : subterm_spec). 
 
 (** Print stack elements *)
 Definition print_stack_element Σ z := 
   match z with 
-  | SClosure G t => "SClosure " ++ "G" ++ (print_term Σ (ctx_names G.(loc_env)) true t) (* NOTE omitting G *)
+  (** FIXME *)
+  | SClosure _ G _ t => "SClosure " ++ "G" ++ (print_term Σ (ctx_names G.(loc_env)) true t) (* NOTE omitting G *)
   | SArg s => "SArg " ++ print_subterm_spec Σ s
   end.
 
-(** Push a list of closures [l] with guard env [G] to the stack *)
+Definition fix_check_result_or (x y : fix_check_result) := match x with
+  | NeedReduce _ _ => x
+  | NoNeedReduce => y
+end.
+
+Notation "x ||| y" := (fix_check_result_or x y).
+
+Fixpoint needreduce_of_stack (stack : list stack_element) : fix_check_result :=
+  match stack with
+    | []                               => NoNeedReduce
+    | (SArg _)                    :: l => needreduce_of_stack l
+    | (SClosure needreduce _ _ _) :: l => needreduce ||| needreduce_of_stack l
+  end. 
+
+Definition redex_level := List.length.
+
+Definition push_stack_closure G needreduce t stack := 
+  (SClosure needreduce G 0 t) :: stack.
+
+(** Push a list of closures [l] with guard env [G] to the stack, [NoNeedReduce] by default *)
 Definition push_stack_closures G l stack := 
-  List.fold_right (fun h acc => (SClosure G h) :: acc) l stack. 
+  List.fold_right (push_stack_closure G NoNeedReduce) l stack. 
 
 (** Push a list of args [l] to the stack *)
 Definition push_stack_args l stack := 
-  List.fold_right (fun h acc => SArg h :: acc) l stack. 
+  List.fold_right (fun spec stack => SArg spec :: stack) l stack. 
+
+(** Lift the elements in stack by k. *)
+Definition lift_stack_element (k : nat) (elt : stack_element) : stack_element :=
+  match elt with
+    | SClosure needreduce s n c => SClosure needreduce s (n+k) c
+    | _                         => elt
+  end.
+
+Definition lift_stack (k : nat) := List.map (lift_stack_element k).
+
+Check lift_stack.
 
 (** Get the recarg the root node of [t] is annotated with. *)
+(* Counterpart: unclear *)
 Definition destruct_recarg (t : wf_paths) : option recarg :=
   destruct_node t (fun r _ => Some r) None. 
 
@@ -382,7 +463,7 @@ Definition context_push_ind_with_params Σ Γ (mib : mutual_inductive_body) (par
 
 
 (** Move the first [n] prods of [c] into the context as elements of non-recursive type. *)
-Fixpoint ra_env_decompose_prod Σ Γ (ra_env : list (recarg * wf_paths)) n (c : term) {struct c} : exc (context * list (recarg * wf_paths) * term) :=
+Fixpoint ra_env_decompose_prod Σ Γ (ra_env : list (recarg * wf_paths)) n (c : term) {struct n} : exc (context * list (recarg * wf_paths) * term) :=
   match n with 
   | 0 => ret (Γ, ra_env, c)
   | S n => 
@@ -401,6 +482,7 @@ Fixpoint ra_env_decompose_prod Σ Γ (ra_env : list (recarg * wf_paths)) n (c : 
 (** [tree] is used to decide when to traverse nested inductives. *)
 (** [ra_env] is used to keep track of the subterm information of dB variables. 
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec].*)
+#[bypass_check(guard)]
 Fixpoint build_recargs_nested Σ ρ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths) (ind: inductive) (args: list term) {struct args}: exc wf_paths := 
   (** if the tree [tree] already disallows recursion, we don't need to go further *)
   if equal_wf_paths tree mk_norec : bool then ret tree else (
@@ -544,7 +626,7 @@ The argument [tree] is used to know when candidate nested types should be traver
 (* TODO: figure out in which cases with nested inductives this isn't actually the identity *)
 Definition get_recargs_approx Σ ρ Γ (tree : wf_paths) (ind : inductive) (args : list term) : exc wf_paths := 
   (* starting with ra_env = [] seems safe because any unbound tRel will be assigned Norec *)
-  build_recargs_nested Σ ρ Γ [] tree ind args. 
+  build_recargs_nested Σ ρ Γ [] tree ind args.
 
 
 (** [restrict_spec_for_match Σ Γ spec rtf] restricts the size information in [spec] to what is allowed to flow through a match with return-type function (aka predicate) [rtf] in environment (Σ, Γ). *)
@@ -645,6 +727,7 @@ Definition branches_binders_specif Σ G (discriminant_spec : subterm_spec) (ind 
 (** [subterm_specif Σ G stack t] computes the recursive structure of [t] applied to arguments with the subterm structures given by the [stack]. 
   [G] collects subterm information about variables which are in scope. 
 *)
+#[bypass_check(guard)]
 Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc subterm_spec:= 
   t_whd <- whd_all Σ G.(loc_env) t;;
   let '(f, l) := decompose_app t_whd in 
@@ -883,6 +966,7 @@ Definition filter_stack_domain Σ ρ Γ (rtf : term) (stack : list stack_element
 Definition bruijn_print Σ Γ t :=
   print_term Σ (ctx_names Γ) true t.
 
+Print mk_branch.
 (** 
   The main checker descending into the recursive structure of a term.
   Checks if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].
@@ -898,6 +982,7 @@ Definition bruijn_print Σ Γ t :=
   [trees] is the list of recursive structures for the decreasing arguments of the mutual fixpoints.
   
   [decreasing_args] is the list of the recursive argument position of every mutual fixpoint. *)
+#[bypass_check(guard)]
 Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
 Σ ρ G (stack : list stack_element) (t : term) {struct t} : exc unit := 
   let check_rec_call' := check_rec_call num_fixes decreasing_args trees Σ ρ in 
@@ -951,20 +1036,37 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
           ret tt
         else ret tt
 
-    (** Assume we are checking the fixpoint f. For checking [g a1 ... am]:
-      if - g = match d return rtf with | Ci xi1 ... xin => bi end
-         - f is guarded with respect to the set of subterms S in a1 ... am
-         - f is guarded with respect to the set of subterms S in the return-type function rtf
-         - f is guarded with respect to the set of subterms S in the discriminant d
-         - for each branch Ci xi1 ... xin => bi where S' := S ∪ { xij | the constructor Ci is recursive in the argument xij }:
-            f is guarded with respect to S' in the branch body
-            bi (virtually) applied to a1 ... am, where we restrict the subterm information of a1 ... am to 
-            what is allowed to flow through the rtf
-      then f is guarded with respect to the set of subterms S in [g a1 ... am].
+    (** Assume we are checking the fixpoint f. For checking [g a1 ... am] where
+    <<
+    g := match [discriminant]
+        as [rtf.pcontext[0]]
+        in [ind_nparams_relev.ci_ind]
+        return [rtf.preturn]
+      with 
+        | C_i [branches[i].bcontext] -> [branches[i].bbody]
+      end
+    >>
+    we need to fulfill the following conditions:
+    1. f is guarded wrt the set of subterms S in a1 ... am
+    2. f is guarded wrt the set of subterms S in the return-type [rtf]
+    3. f is guarded wrt the set of subterms S in [discriminant]
+    4. for each branch Ci xi1 ... xin => bi
+        where S' := S ∪ { xij | the constructor Ci is recursive in the argument xij }:
+      f is guarded with respect to S' in the branch body
+      bi (virtually) applied to a1 ... am, where we restrict the subterm information of a1 ... am to 
+      what is allowed to flow through the rtf (???)
+
+    then f is guarded with respect to the set of subterms S in [g a1 ... am].
       (YJ: Taken from Eduardo's "Codifying guarded recursions" )
     *)
     | tCase ind_nparams_relev rtf discriminant branches => 
-        (** match discriminant : ind return rtf with [branches] end *)
+        (** match [discriminant]
+              as [rtf.pcontext[0]]
+              in [ind_nparams_relev.ci_ind]
+              return [rtf.preturn]
+            with 
+            | C_i [branches[i].bcontext] -> [branches[i].bbody]
+            end *)
         let ind := ind_nparams_relev.(ci_ind) in
         let nparams := ind_nparams_relev.(ci_npar) in
         catchE (
@@ -986,7 +1088,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
               (** push the rec arg specs for the binders introduced by the branch *)
               let stack_branch := push_stack_args stack' branch_spec in
               (** check the branch *)
-              check_rec_call' G  stack_branch branch) (* TODO YJ: probably this needs to use push_guard_env G with ctx *)
+              check_rec_call' G stack_branch branch) (* TODO YJ: probably this needs to use push_guard_env G with ctx *)
             branches
         )  
         (fun err => 
@@ -1180,6 +1282,7 @@ Definition check_one_fix Σ ρ G (recpos : list nat) (trees : list wf_paths) (de
 (** Extract the [inductive] that [fixp] is doing recursion over (and check that the recursion is indeed over an inductive).
   Moreover give the body of [fixp] after the recursive argument and the environment (updated from [Γ])
   that contains the arguments up to (and including) the recursive argument (of course also the fixpoints). *)
+#[bypass_check(guard)]
 Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inductive * list (context * term)):= 
   trace "inductive_of_mutfix : enter";;
   (* YJ: fixp is a list of all mutual branches of the (mutual) fixpoint. *)

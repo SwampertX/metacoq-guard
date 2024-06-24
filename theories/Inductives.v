@@ -17,10 +17,6 @@ Open Scope exc_scope.
 
 Notation loc := string (only parsing).
 
-(** to get MC to print the repr of arbitary stuff -- works because MetaCoq Run uses a very lazy evaluation strategy and does not reduce the thunk *)
-Definition thunk {A} (a : A) := "". 
-Opaque thunk. (* nvm, tmEval does reduce it anyways *)
-
 (** ** Trace-monad based *)
 From MetaCoq.Guarded Require Export Trace. 
 
@@ -436,26 +432,47 @@ Definition has_inductive_codomain Σ Γ t : exc bool :=
 
 (** ** Tools for wf_paths *)
 
+Inductive recarg_type :=
+  (* "internal" recursion on (one of) the (mutual) inductive(s). *)
+  | RecArgInd (i : inductive) 
+  (* "external" recursion on inductives outside the currently-defined mutual group.
+    has nothing to do with nested induction, since nesting is eventually inlined (TODO: find proof) *)
+  | RecArgPrim (c : kername). 
+
+Definition eqb_recarg_type (rt1 rt2 : recarg_type) :=
+  match rt1, rt2 with
+    | RecArgInd i1, RecArgInd i2 => eqb i1 i2
+    | RecArgPrim c1, RecArgPrim c2 => eqb c1 c2
+    | _, _ => false
+  end.
+Instance reflect_recarg_type : ReflectEq recarg_type.
+Proof.
+  refine {| eqb := eqb_recarg_type |}. 
+  intros [] []; unfold eqb_recarg_type; finish_reflect. 
+Defined.
+
 (* Recursive argument labels for representing the recursive structure of constructors of inductive types. *)
 Inductive recarg := 
-  | Norec                 (* Non-recursive argument *)
-  | Mrec (i : inductive)  (* Recursive argument of type i *)
-  | Imbr (i : inductive). (* Recursive argument of "external" inductive type i, i.e. from another block of mutual inductives *)
+  | Norec                   (* Non-recursive argument *)
+  | Mrec (i : recarg_type). (* Recursive argument of type [i] *)
 
 Definition wf_paths := rtree recarg.
 
 Instance reflect_rtree (X : Type) (H: ReflectEq X): ReflectEq (rtree X).
 Proof. 
   refine {| eqb := rtree_eqb eqb |}.  
-  intros [] []; unfold rtree_eqb; simpl. 
-  (* TODO *)
-Admitted. 
+  intros [] []; unfold rtree_eqb; simpl.
+  all: try solve [constructor ; discriminate].
+
+  - destruct (eqb_spec tree_index tree_index0);
+    destruct (eqb_spec ind_index ind_index0);
+    try subst; simpl.
+Admitted.  (* FIXME *)
 
 Definition eqb_recarg (x y : recarg) := 
   match x, y with 
   | Norec, Norec => true
   | Mrec i, Mrec i' => eqb i i'
-  | Imbr i, Imbr i' => eqb i i'
   | _, _ => false
   end.
 Instance reflect_recarg : ReflectEq recarg. 
@@ -488,14 +505,15 @@ Definition eq_wf_paths a b := rtree_equal (eqb (A := recarg)) a b.
 
 (** Join the recarg info if compatible. *)
 Definition inter_recarg r1 r2 := 
-  match r1, r2 with
+  if (eqb (A := recarg)) r1 r2 then Some r1 else None.
+  (* match r1, r2 with
   | Norec, Norec => Some Norec
   | Mrec i1, Mrec i2
   | Imbr i1, Imbr i2
   | Mrec i1, Imbr i2 => if i1 == i2 then Some r1 else None (* intersection is an Mrec, not an Imbr, if one is an Mrec *)
   | Imbr i1, Mrec i2 => if i1 == i2 then Some r2 else None
   | _, _ => None
-  end.
+  end. *)
 
 (** *** Operations on recursive arguments trees *)
 
