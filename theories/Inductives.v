@@ -47,28 +47,12 @@ Arguments unwrap { _ _ _ _}.
 
 Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr.
 
-
-(** * normal exception monad *)
-(*Inductive guard_exc := *)
-  (*| ProgrammingErr (w : loc) (s : string)*)
-  (*| OtherErr (w : loc) (s : string)*)
-  (*| EnvErr (w: loc) (kn : kername) (s : string)*)
-  (*| IndexErr (w : loc) (s : string) (i : nat)*)
-  (*| GuardErr (w : loc) (s : string).*)
-(*Notation "'exc' A" := (@excOn guard_exc A) (at level 100).*)
- (*just ignore traces *)
-(*Definition trace (t : string) : exc unit := ret tt.*)
-
-(*Definition unwrap := @exc_unwrap.*)
-(*Arguments unwrap { _ _ _ _}. *)
-
-
 Notation "a == b" := (eqb a b) (at level 70) : exc_scope. 
 Notation "a != b" := (negb(a==b)) (at level 90) : exc_scope.
 
 (** As the guardedness checker reduces terms at many places before reducing, the key functions are not structurally recursive. 
   We therefore disable the guardedness checker for this file. *)
-Unset Guard Checking. 
+(* Unset Guard Checking.  *)
 
 
 (** ** Compute uniform parameters *)
@@ -287,8 +271,8 @@ Definition push_assumptions_context '(names, types) Γ :=
   let ctxt := map2_i (fun i name type => vass name (lift0 i type)) names types in
   List.fold_left (fun acc assum => acc ,, assum) ctxt Γ. 
 
+Unset Guard Checking. 
 (** [decompose_lam_assum Σ Γ ty] decomposes [ty] into a context of lambdas/lets and a remaining type, after reducing *)
-Unset Guard Checking.
 Definition decompose_lam_assum Σ Γ := 
   let lamec_rec := fix lamec_rec Γ Γ0 ty {struct ty} :=
     ty_whd <- whd_all_nolet Σ Γ ty;;
@@ -339,6 +323,7 @@ Definition decompose_prod Σ Γ (t : term) : exc (context * term) :=
     end
   in decrec Γ [] t. 
 
+Set Guard Checking. 
 (** [decompose_lam_n_assum Σ Γ n t] decomposes [t] into a context of lambdas and lets. 
   We expect [n] lambdas and also take all the lets up to the n-th lambda, but no more lets after the n-th lambda. *)
 Definition decompose_lam_n_assum Σ Γ n (t : term) : exc (context * term) := 
@@ -417,13 +402,14 @@ Definition fold_term_with_binders {X Y}(g : X -> X) (f : X -> Y -> term -> Y) (n
       let n' := Nat.iter (length mfix) g n in (* the length mfix binders for the fixes are introduced *)
       let types_and_bodies := map2 (fun a b => (a, b)) (mfix_types mfix) (mfix_bodies mfix) in 
       List.fold_left (fun acc '(type, body) => f n' (f n acc type) body) types_and_bodies acc
-  | prim => acc
+  | tInt _ | tFloat _ | tArray _ _ _ _ => acc (* primitives *)
   end.
 
 (** check if a de Bruijn index in range 
     n ... n + num -1 
   occurs in t *)
 (* TODO: might not handle evars/metas/casts correctly *)
+#[bypass_check(guard)]
 Definition rel_range_occurs n num t := 
   let occur_rec := fix occur_rec n t {struct t}:= 
     match t with

@@ -1,11 +1,8 @@
-From MetaCoq.Template Require Import Checker. 
-From MetaCoq.Utils Require Import utils.
+From MetaCoq.Utils Require Import utils MCMSets.
 From MetaCoq.Common Require Import BasicAst Universes Environment Reflect.
-From MetaCoq.Template Require Import Ast AstUtils.
-From MetaCoq.Template Require Import LiftSubst Pretty.
-From MetaCoq.Guarded Require Import MCRTree. 
+From MetaCoq.Template Require Import Ast AstUtils LiftSubst Pretty Checker.
 
-From MetaCoq.Guarded Require Import Except util Trace Inductives.
+From MetaCoq.Guarded Require Import MCRTree Except util Trace Inductives.
 
 (** * Guard Checker *)
 
@@ -14,7 +11,8 @@ From MetaCoq.Guarded Require Import Except util Trace Inductives.
   - constants and constant unfolding is not handled faithfully in MetaCoq. 
     The guardedness checker will be able to unfold constants even when they should be opaque. 
 
-  - I don't currently understand the exact reasons why restrictions of subterm info flow through dependent matches is needed in some cases. I have documented what is restricted, but not why it is needed.
+  - I don't currently understand the exact reasons why restrictions of subterm info flow through dependent matches is needed in some cases.
+    I have documented what is restricted, but not why it is needed.
 
   - there are likely tons of bugs (e.g. dB off-by-ones) in code which I couldn't properly test due to the slow reduction.
     
@@ -23,7 +21,6 @@ From MetaCoq.Guarded Require Import Except util Trace Inductives.
 
 
 Open Scope exc_scope.
-Unset Guard Checking.
 
 (*Definition print {A} (a : A) : exc unit := *)
   (*ret (print a).*)
