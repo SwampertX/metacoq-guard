@@ -56,16 +56,16 @@ Definition size_glb s1 s2 :=
   | _, _ => Large
   end.
 
-
 (* Set Default Goal Selector "all". *)
 Module Natset := MSetAVL.Make Nat.
-(* Instance reflect_natset : ReflectEq Natset.t.
+Instance reflect_natset : ReflectEq Natset.t.
 Proof.
   refine {| eqb := Natset.equal |}.
   intros [t1 t1o]. induction t1.
   intros [t2 t2o]. induction t2.
   cbn.
-  - destruct t1o. constructor. *)
+  - destruct t1o. constructor.
+Admitted.
 (** possible specifications for a term:
    - Not_subterm: when the size of a term is not related to the recursive argument of the fixpoint
    - Subterm: when the term is a subterm of the recursive argument
@@ -79,7 +79,6 @@ Inductive subterm_spec :=
   | Dead_code
   | Not_subterm
   | Internally_bound_subterm (l : Natset.t). 
-
 
 Definition subterm_spec_eqb (s1 s2 : subterm_spec) := 
   match s1, s2 with
@@ -105,8 +104,8 @@ Defined.
 Definition print_recarg Σ r := 
   match r with
   | Norec => "Norec"
-  | Mrec i => "Mrec(" ++ string_of_kername i.(inductive_mind) ++ ")"
-  | Imbr i => "Imbr(" ++ string_of_kername i.(inductive_mind) ++ ")"
+  | Mrec (RecArgInd i) => "Mrec(" ++ string_of_kername i.(inductive_mind) ++ ")"
+  | Mrec (RecArgPrim c) => "Mrec(" ++ string_of_kername c ++ ")"
   end.
 
 Fixpoint print_wf_paths Σ (t : wf_paths) := 
@@ -403,21 +402,97 @@ Definition lift_stack_element (k : nat) (elt : stack_element) : stack_element :=
 
 Definition lift_stack (k : nat) := List.map (lift_stack_element k).
 
-Check lift_stack.
-
-(** Get the recarg the root node of [t] is annotated with. *)
-(* Counterpart: unclear *)
-Definition destruct_recarg (t : wf_paths) : option recarg :=
-  destruct_node t (fun r _ => Some r) None. 
 
 (** Check that the recarg [r] is an [Mrec] or [Imbr] node with [ind]. *)
+(* Counterpart: [match_inductive] *)
 Definition match_recarg_inductive (ind : inductive) (r : recarg) := 
   match r with
-  | Norec => false
-  | Mrec i | Imbr i => i == ind
+  | Mrec (RecArgInd i) => i == ind
+  | Norec | Mrec (RecArgPrim _) => false
   end.
 
 (** ** Building recargs trees *)
+
+(** Given the subterm spec of the discriminant, compute the subterm specs for the binders bound by the branches of the match. *)
+(** In [match c as z in ci y_s return P with |C_i x_s => t end]
+   [branches_specif Σ G c_spec ind] returns a list of [x_s]'s specs knowing
+   [c_spec].  [ind] is the inductive we match on. *)
+(** Complexity: Quadratic in the number of constructors of [ind] due to calling the linear [wf_paths_constr_args_sizes] every iteration. *)
+Definition branches_binders_specif Σ G (discriminant_spec : subterm_spec) (ind : inductive) : exc list (list subterm_spec) := 
+  (** get the arities of the constructors (without lets, without parameters) *)
+  constr_arities <- (
+    '(_, oib) <- lookup_mind_specif Σ ind;;
+    ret $ map cstr_arity oib.(ind_ctors));;
+  unwrap $ mapi (fun i (ar : nat) => 
+    match discriminant_spec return exc (list subterm_spec) with 
+    | Subterm _ _ tree => 
+      (** check if the tree refers to the same inductive as we are matching on *)
+        (** get the root node (Norec, Mrec etc) of the recarg tree of the discriminant, which cannot be Empty. *)
+        recarg_info <- except (OtherErr "branches_binders_specif" "malformed tree") $ destruct_recarg tree;;
+        if negb (match_recarg_inductive ind recarg_info) then
+          (** the tree talks about a different inductive than we are matching on, so all the constructor's arguments cannot be subterms  *)
+          (** in principle, the only place that calls [branches_binders_specif] is [subterm_specif] when specifying a [tCase].
+            In that case, the [ind] argument is given by the type of discriminant,
+            so it shouldn't differ from that contained in [discriminant_spec] *)
+          ret $ tabulate (fun _ => Not_subterm) ar (** TODO: should throw error instead? ProgrammingError? *)
+        else 
+          (** get trees for the arguments of the i-th constructor *)
+          (** YJ: perhaps too much work, just need to map on the i-th branch
+            instead of all constructors? 
+            
+            Also "size" here means "tree". Idk why the ambiguity :/ *)
+          args_sizes <- wf_paths_constr_args_sizes tree i;; (* list (list wf_paths) *)
+          (** this should hopefully be long enough and agree with the arity of the constructor *)
+          assert (length args_sizes == ar) (OtherErr "branches_binders_specif" "number of constructor arguments don't agree");;
+          (** for each arg of the constructor: generate a strict subterm spec if
+            they are recursive, otherwise Not_subterm.  The generated spec also
+            contains the recursive tree for that argument to enable nested matches. *)
+          trees <- unwrap $ map spec_of_tree args_sizes;;
+          ret trees
+    (* for the other cases, just propagate the discriminant_spec *)
+    | Dead_code | Not_subterm | Internally_bound_subterm _ =>
+        ret $ tabulate (fun _ => discriminant_spec) ar
+    end
+    ) constr_arities.
+
+(** A reimplementation of [branches_binders_specif] that is linear. *)
+Definition branches_specif Σ G (discriminant_spec : subterm_spec) (ind : inductive) : exc list (list subterm_spec) := 
+  (** get the arities of the constructors (without lets, without parameters) *)
+  constr_arities <- (
+    '(_, oib) <- lookup_mind_specif Σ ind;;
+    ret $ map cstr_arity oib.(ind_ctors));;
+  (** if discriminant is a subterm, return a [exc (list (list wf_paths))], otherwise a [exc subterm_spec] *)
+  all_constr_args_sizes <- match discriminant_spec return exc (list (list wf_paths) + subterm_spec) with 
+    | Subterm _ _ tree => 
+      (** check if the tree refers to the same inductive as we are matching on *)
+        (** get the root node (Norec, Mrec etc) of the recarg tree of the discriminant, which cannot be Empty. *)
+        recarg_info <- except (OtherErr "branches_binders_specif" "malformed tree") $ destruct_recarg tree;;
+        if negb (match_recarg_inductive ind recarg_info) then
+          (** the tree talks about a different inductive than we are matching on, so all the constructor's arguments cannot be subterms  *)
+          (** in principle, the only place that calls [branches_binders_specif] is [subterm_specif] when specifying a [tCase].
+            In that case, the [ind] argument is given by the type of discriminant,
+            so it shouldn't differ from that contained in [discriminant_spec] *)
+          ret $ inr Not_subterm 
+        else 
+          (** get trees for the arguments of the i-th constructor *)
+           trees <- wf_paths_all_constr_args_sizes tree;; (* list (list wf_paths) *)
+          ret $ inl trees
+    (* for the other cases, just propagate the discriminant_spec *)
+    | Dead_code | Not_subterm | Internally_bound_subterm _ => ret $ inr discriminant_spec
+    end;;
+  res <- match all_constr_args_sizes with
+    | inr spec =>
+        ret $ map (fun ar => (repeat spec ar)) constr_arities
+    | inl all_constr_args_sizes =>
+        unwrap $ mapi (fun i (ar : nat) => 
+          args_sizes <- except (IndexErr "branches_binders_specif" "no tree for constructor" i) $ nth_error all_constr_args_sizes i;; (* list (wf_paths) *)
+          assert (length args_sizes == ar) (OtherErr "branches_binders_specif" "number of constructor arguments don't agree");;
+          trees <- unwrap $ map spec_of_tree args_sizes;;
+          ret trees
+          ) constr_arities
+    end;;
+  ret res.
+
 (** In some cases, we need to restrict the subterm information flowing through a dependent match, see the explanation above.
   In this case, we calculate an approximation of the recargs tree and intersect with it. 
 
@@ -446,6 +521,7 @@ Definition ra_env_push_inner_inductives_with_params ra_env ind_kn ntypes : list 
 (** Add the types of mutual inductives as assumptions to the local context (the first inductive body at dB 0)
   The inductive types are instantiated with the (uniform) parameters in [pars]. 
 *)
+(* Counterpart: [ienv_push_inductive] *)
 Definition context_push_ind_with_params Σ Γ (mib : mutual_inductive_body) (pars : list term) : exc context := 
   let num_bodies := length mib.(ind_bodies) in
   (* get relevance *)
@@ -463,6 +539,7 @@ Definition context_push_ind_with_params Σ Γ (mib : mutual_inductive_body) (par
 
 
 (** Move the first [n] prods of [c] into the context as elements of non-recursive type. *)
+(* Counterpart: [ienv_decompose_prod] *)
 Fixpoint ra_env_decompose_prod Σ Γ (ra_env : list (recarg * wf_paths)) n (c : term) {struct n} : exc (context * list (recarg * wf_paths) * term) :=
   match n with 
   | 0 => ret (Γ, ra_env, c)
@@ -675,54 +752,6 @@ Definition restrict_spec_for_match Σ ρ Γ spec (rtf : term) : exc subterm_spec
 (** ** Checking fixpoints *)
 
 
-(** Given a subterm spec for a term to match on, compute the subterm specs for the binders bound by a match in the individual branches. *)
-(** In [match c as z in ci y_s return P with |C_i x_s => t end]
-   [branches_specif Σ G c_spec ind] returns a list of [x_s]'s specs knowing
-   [c_spec]. *)
- (** [ind] is the inductive we match on. *)
-Definition branches_binders_specif Σ G (discriminant_spec : subterm_spec) (ind : inductive) : exc list (list subterm_spec) := 
-  (** get the arities of the constructors (without lets, without parameters) *)
-  (** YJ: so this is the number of index of the constructors? ie how many products? *)
-  constr_arities <- (
-    '(_, oib) <- lookup_mind_specif Σ ind;;
-    ret $ map cstr_arity oib.(ind_ctors));;
-  unwrap $ mapi (fun i (ar : nat) => 
-    match discriminant_spec return exc (list subterm_spec)  with 
-    | Subterm _ tree => 
-        (** check if the tree refers to the same inductive as we are matching on *)
-        recarg_info <- except (OtherErr "branches_binders_specif" "malformed tree") $ destruct_recarg tree;;
-        if negb (match_recarg_inductive ind recarg_info) then
-          (** the tree talks about a different inductive than we are matching on, so all the constructor's arguments cannot be subterms  *)
-          (** YJ: can this ever happen? To me it seems impossible, since [ind]
-            is derived from the AST of the [tCase], which denotes the type of
-            the discriminant. I will not expect the subterm_spec of discriminant
-            to contain anything else than the tree of [ind].
-          *)
-          ret $ tabulate (fun _ => Not_subterm) ar
-        else 
-          (** get trees for the arguments of the i-th constructor *)
-          (** YJ: perhaps too much work, just need to map on the i-th branch
-            instead of all constructors? 
-            
-            Also "size" here means "tree". Idk why the ambiguity :/ *)
-          constr_args_sizes <- wf_paths_constr_args_sizes tree;; (* list (list wf_paths) *)
-          args_sizes <- except (IndexErr "branches_binders_specif" "no tree for constructor" i) $
-            nth_error constr_args_sizes i;; (* list (wf_paths) *)
-          (** this should hopefully be long enough and agree with the arity of the constructor *)
-          assert (length args_sizes == ar) (OtherErr "branches_binders_specif" "number of constructor arguments don't agree");;
-          (** for each arg of the constructor: generate a strict subterm spec if
-            they are recursive, otherwise Not_subterm.  The generated spec also
-            contains the recursive tree for that argument to enable nested matches. *)
-          trees <- unwrap $ map spec_of_tree args_sizes;;
-          ret trees
-    | Dead_code => 
-        (* just propagate *)
-        ret $ tabulate (fun _ => Dead_code) ar
-    | Not_subterm => 
-        (* just propagate *)
-        ret $ tabulate (fun _ => Not_subterm) ar
-    end
-    ) constr_arities.
 
 (** [subterm_specif Σ G stack t] computes the recursive structure of [t] applied to arguments with the subterm structures given by the [stack]. 
   [G] collects subterm information about variables which are in scope. 
@@ -966,7 +995,6 @@ Definition filter_stack_domain Σ ρ Γ (rtf : term) (stack : list stack_element
 Definition bruijn_print Σ Γ t :=
   print_term Σ (ctx_names Γ) true t.
 
-Print mk_branch.
 (** 
   The main checker descending into the recursive structure of a term.
   Checks if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].

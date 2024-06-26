@@ -7,6 +7,7 @@ Import ListNotations.
 From MetaCoq Require Import Common.BasicAst Utils.bytestring.
 From MetaCoq.Guarded Require Import MCRTree Inductives.
 
+
 Set Primitive Projections.
 Record r := mk_r { r_f1 : nat ; r_f2 : nat }.
 MetaCoq Quote Definition r_syntax := Eval compute in r.
@@ -15,6 +16,17 @@ MetaCoq Quote Definition r_f1_syntax := Eval compute in r_f1.
 Print r_f1_syntax. (* tLambda with a tCase body *)
 Definition a := mk_r 1 2.
 MetaCoq Test Quote (a.(r_f1)).
+
+Hypothesis Heq : (False -> False) = True.
+
+Unset Guard Checking.
+Fixpoint contradiction (u : True) : False :=
+contradiction (
+match Heq in (_ = T) return T with
+| eq_refl => fun f:False => match f with end
+end
+).
+MetaCoq Run (check_fix contradiction).
 
 
 Set Positivity Checking. 

@@ -34,73 +34,11 @@ Import ListNotations.
 Require Import Coq.Lists.ListSet.
 Require Import Coq.Arith.PeanoNat.
 From MetaCoq.Utils Require Import MCUtils.
+From MetaCoq.Guarded Require Import util.
 
 (* TODO: proper exception handling with the except monad *)
 
 Open Scope bool_scope.
-
-(* TODO move *)
-Definition is_none {X: Type} (a : option X) :=
-  match a with
-  | None => true
-  | _ => false
-  end.
-
-Fixpoint tabulate {X : Type} (f : nat -> X) n :=
-  match n with
-  | 0 => []
-  | S n => tabulate f n ++ [f n]
-  end.
-
-Definition lookup {X Y: Type} (eqb : X -> X -> bool) (x : X) := fix rec (l : list (X * Y)) : option Y :=
-  match l with
-  | [] => None
-  | (x', y') :: l => if eqb x x' then Some y' else rec l
-  end.
-
-Definition list_eqb {X : Type} (eqbX : X -> X -> bool) := fix rec l l' :=
-  match l, l' with
-  | nil, nil => true
-  | cons x l0, cons x' l0' => eqbX x x' && rec l0 l0'
-  | _, _ => false
-  end.
-
-Definition forallb2 {X : Type} (f : X -> X -> bool) := fix rec l l' :=
-  match l, l' with
-  | nil, nil => true
-  | x :: l0, x' :: l0' => f x x' && rec l0 l0'
-  | _, _ => false
-  end.
-
-Definition set_memb {X : Type} (eqbX : X -> X -> bool) := fix rec x s :=
-  match s with
-  | [] => false
-  | x' :: s' =>  eqbX x x' || rec x s'
-  end.
-
-Definition map2 {X Y Z: Type} (f : X -> Y -> Z) := fix rec l1 l2 :=
-  match l1, l2 with
-  | [], [] => []
-  | x :: l1, y :: l2 => f x y :: rec l1 l2
-  | _, _ => []
-  end.
-
-Definition pair_eqb {X : Type} (eqb : X -> X -> bool) '(t, u) '(t', u') := eqb t t' && eqb u u'.
-
-Definition option_lift {X Y Z} (f : X -> Y -> Z) (a : option X) (b : option Y) : option Z:=
-  match a, b with
-  | Some x, Some y => Some (f x y)
-  | _, _ => None
-  end.
-Fixpoint list_lift_option {X} (l : list (option X)) : option (list X) :=
-  match l with
-  | [] => Some []
-  | x :: l => option_lift (@cons X) x (list_lift_option l)
-  end.
-
-Infix "<?" := Nat.ltb (at level 70).
-Infix "=?" := Nat.eqb (at level 70).
-
 
 Unset Guard Checking.
 Section trees.
@@ -192,6 +130,10 @@ Definition destruct_node {Y} t (f : X -> list (rtree X) -> Y) y :=
   | Node l children => f l children
   | _ => y
   end.
+(** Get the recarg the root node of [t] is annotated with. *)
+Definition destruct_recarg t : option X :=
+  destruct_node t (fun r _ => Some r) None. 
+
 Definition is_node t :=
   match expand t with
   | Node _ _ => true

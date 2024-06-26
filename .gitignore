@@ -407,3 +407,5 @@ erasure-plugin/Makefile.plugin
 erasure-plugin/Makefile.plugin.conf
 erasure-plugin/META
 safechecker-plugin/META
+
+playground.v

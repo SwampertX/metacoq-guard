@@ -527,16 +527,31 @@ Definition equal_wf_paths a b :=
 
 Definition mk_norec := mk_node Norec []. 
 
+(** Given a recargs tree [t] representing an inductive type,
+  returns a list of trees corresponding to the i-th constructor of [t]. *)
+(** Complexity: Linear in number of constructors. *)
+Definition wf_paths_constr_args_sizes t i : exc (list wf_paths) := 
+  let fn_name := "wf_paths_constr_args_sizes" in
+  (** By destructing the tree, we get the root and its constructors. *)
+  destruct_node t (fun ra constrs =>
+    (** Of which the root should not be Norec *)
+    assert (match ra with Norec => false | _ => true end) $ ProgrammingErr fn_name "should not be called with Norec";;
+    constr <- except (ProgrammingErr fn_name "index i of constructor out of bound") (nth_error constrs i);;
+    l <- destruct_node constr (fun _ args => ret args) (raise $ ProgrammingErr "wf_paths_constr_args_sizes" "expected node");;
+    ret l)
+  (raise $ ProgrammingErr fn_name "expected node").
+
 (** Given a recargs tree [t] representing an inductive type, returns a list of
 list of trees. Each inner list corresponds to a constructor of [t], and has
 a tree for every argument of the constructor. (edit: clarity) *)
-Definition wf_paths_constr_args_sizes t : exc (list (list wf_paths)) := 
+Definition wf_paths_all_constr_args_sizes t : exc (list (list wf_paths)) := 
   destruct_node t (fun ra constrs => (** YJ: constrs = constructors not constraints :sweat_smile: *)
     assert (match ra with Norec => false | _ => true end) $ ProgrammingErr "wf_paths_constr_args_sizes" "should not be called with Norec";;
-    l <- unwrap $ map (fun t => destruct_node t (fun _ args => ret args) (raise $ ProgrammingErr "wf_paths_constr_args_sizes" "expected node")) 
+    l <- unwrap $ map (fun t => destruct_node t (fun _ args => ret args) (raise $ ProgrammingErr "wf_paths_all_constr_args_sizes" "expected node")) 
       constrs;;
     ret l)
   (raise $ ProgrammingErr "wf_paths_constr_args_sizes" "expected node").
+
 
 (** Given a list of lists with the trees for the arguments (excluding parameters) of each constructor, 
   construct the tree for a particular inductive type. 
