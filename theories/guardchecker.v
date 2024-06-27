@@ -493,6 +493,8 @@ Definition branches_specif Σ G (discriminant_spec : subterm_spec) (ind : induct
     end;;
   ret res.
 
+Definition check_inductive_codomain := has_inductive_codomain.
+
 (** In some cases, we need to restrict the subterm information flowing through a dependent match, see the explanation above.
   In this case, we calculate an approximation of the recargs tree and intersect with it. 
 
@@ -506,23 +508,30 @@ Definition branches_specif Σ G (discriminant_spec : subterm_spec) (ind : induct
   Importantly, the recargs tree (of type wf_paths) may make references to other elements in the [ra_env] (via the [Param] constructor).
 *)
 
-(** Add the types of inner mutual inductives to a recargs environment. This is used in the context of nested inductives.
-  Specifically, for the j-th inductive in the block, we add [(Imbr $ mkInd ind_kn j, Param 0 j)], i.e. an inner inductive with a direct recursive reference to the j-th inductive in the block. 
-  The rest of the env is lifted accordingly.
-  *)
-Definition ra_env_push_inner_inductives_with_params ra_env ind_kn ntypes : list _ := 
-  (** make inner inductive types (Imbr in the tree) with recursive references for the individual types *)
-  let rc := rev $ mapi (fun i t => (Imbr (mkInd ind_kn i), t)) 
-                       (mk_rec_calls (X := recarg) ntypes) in
-  (** lift the existing ra_env *)
-  let ra_env := map (fun '(r, t) => (r, rtree_lift ntypes t)) ra_env in
-  rc ++ ra_env. 
+Definition ienv := context * list (recarg * wf_paths).
 
-(** Add the types of mutual inductives as assumptions to the local context (the first inductive body at dB 0)
-  The inductive types are instantiated with the (uniform) parameters in [pars]. 
-*)
-(* Counterpart: [ienv_push_inductive] *)
-Definition context_push_ind_with_params Σ Γ (mib : mutual_inductive_body) (pars : list term) : exc context := 
+Open Scope list.
+
+Definition ienv_push_var '(Γ, ra_env) kn ty ra : ienv := ((Γ ,, vass kn ty) , (ra :: ra_env)).
+
+Definition ienv_push_inductive Σ Γ ra_env ind (pars : list term) : exc ienv := 
+  (** Add the types of inner mutual inductives to a recargs environment. This is used in the context of nested inductives.
+    Specifically, for the j-th inductive in the block, we add [(Imbr $ mkInd ind_kn j, Param 0 j)], i.e. an inner inductive with a direct recursive reference to the j-th inductive in the block. 
+    The rest of the env is lifted accordingly.
+    *)
+  let ra_env_push_inner_inductives_with_params ntypes : list (recarg × wf_paths) := 
+    (** make inner inductive types (Imbr in the tree) with recursive references for the individual types *)
+    let rc := rev $ mapi (fun i t => (Mrec (RecArgInd (mkInd ind.(inductive_mind) i)), t)) 
+                        (mk_rec_calls (X := recarg) ntypes) in
+    (** lift the existing ra_env *)
+    let ra_env' := map (fun '(r, t) => (r, rtree_lift ntypes t)) ra_env in
+    rc ++ ra_env' 
+  in
+
+  (** Add the types of mutual inductives as assumptions to the local context (the first inductive body at dB 0)
+    The inductive types are instantiated with the (uniform) parameters in [pars]. 
+  *)
+  '(mib, oib) <- lookup_mind_specif Σ ind;;
   let num_bodies := length mib.(ind_bodies) in
   (* get relevance *)
   fst_body <- except (OtherErr "context_push_ind_with_params" "mutual inductive has no bodies") $
@@ -535,25 +544,34 @@ Definition context_push_ind_with_params Σ Γ (mib : mutual_inductive_body) (par
     ty_inst <- hnf_prod_apps Σ Γ specif.(ind_type) pars;;
     ret $ Γ ,, vass na ty_inst 
   in 
-  List.fold_right (fun i acc => acc <- acc;; push_ind i acc) (ret Γ) mib.(ind_bodies).
-
+  Γ' <- List.fold_right (fun i acc => acc <- acc;; push_ind i acc) (ret Γ) mib.(ind_bodies);;
+  let ra_env' := ra_env_push_inner_inductives_with_params num_bodies in
+  ret (Γ', ra_env').
 
 (** Move the first [n] prods of [c] into the context as elements of non-recursive type. *)
-(* Counterpart: [ienv_decompose_prod] *)
-Fixpoint ra_env_decompose_prod Σ Γ (ra_env : list (recarg * wf_paths)) n (c : term) {struct n} : exc (context * list (recarg * wf_paths) * term) :=
+Fixpoint ienv_decompose_prod Σ ienv n (c : term) {struct n} : exc (context * list (recarg * wf_paths) * term) :=
+  let '(Γ, ra_env) := ienv in
   match n with 
-  | 0 => ret (Γ, ra_env, c)
+  | 0 => ret (ienv, c)
   | S n => 
     c_whd <- whd_all Σ Γ c;;
     match c_whd with
     | tProd na ty body =>
       let Γ' := Γ ,, vass na ty in 
       let ra_env' := (Norec, mk_norec) :: ra_env in
-      ra_env_decompose_prod Σ Γ' ra_env' n body
+      ienv_decompose_prod Σ (Γ', ra_env') n body
     | _ => raise (OtherErr "ra_env_decompose_prod" "not enough prods") 
     end
   end.
 
+(** TODO: missing [abstract_mind_lc] and [is_primitive_positive_container].
+  former is just restructuring old code, latter is due to retroknowledge *)
+
+Definition is_primitive_positive_container env c =
+  match env.retroknowledge.Retroknowledge.retro_array with
+  | Some c' when QConstant.equal env c c' -> true
+  | _ -> false
+  end.
 (** Create the recursive tree for a nested inductive [ind] applied to arguments [args]. *)
 (** In particular: starting from the tree [tree], we instantiate parameters suitably (with [args]) to handle nested inductives. *)
 (** [tree] is used to decide when to traverse nested inductives. *)
@@ -653,11 +671,12 @@ with build_recargs Σ ρ Γ (ra_env : list (recarg * wf_paths)) (tree : wf_paths
     (** if the given tree for [t] allows it (i.e. has an inductive as label at the root), we traverse a nested inductive *)
     match destruct_recarg tree with 
     | None => raise $ OtherErr "build_recargs" "tInd case: malformed recargs tree"
-    | Some (Imbr ind') | Some (Mrec ind') => 
+    | Some (Mrec (RecArgInd ind')) => 
         if ind == ind' then build_recargs_nested Σ ρ Γ ra_env tree ind args 
                        else ret mk_norec
-    | _ => ret mk_norec 
+    | Some (Norec) | Some (Mrec (RecArgPrim _)) => ret mk_norec 
     end
+  | tConst (c, _)
   | _ => ret mk_norec
   end
 

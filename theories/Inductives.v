@@ -416,6 +416,7 @@ Definition rel_range_occurs n num t :=
   in occur_rec n t.
 
 (** check if a (function) type has an inductive co-domain *)
+(** Counterpart: [check_inductive_codomain] *)
 Definition has_inductive_codomain Σ Γ t : exc bool := 
   '(abs_context, t') <- decompose_lam_assum Σ Γ t;;
   let Γ' := Γ ,,, abs_context in
