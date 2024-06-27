@@ -572,7 +572,6 @@ Definition is_primitive_positive_container Σ c :=
   | None => false
   end.
 
-Unset Guard Checking.
 (** Create the recursive tree for a nested inductive [ind] applied to arguments [args]. *)
 (** In particular: starting from the tree [tree], we instantiate parameters suitably (with [args]) to handle nested inductives. *)
 (** [tree] is used to decide when to traverse nested inductives. *)
@@ -687,7 +686,7 @@ with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_pa
   end
 
 
-with build_recargs_nested_primitive Σ ρ (ienv : ienv) tree (c : kername) (args : list term) : exc wf_paths :=
+with build_recargs_nested_primitive Σ ρ (ienv : ienv) tree (c : kername) (args : list term) {struct tree} : exc wf_paths :=
   if eq_wf_paths tree mk_norec then ret tree
   else
   let '(Γ, ra_env) := ienv in
@@ -742,7 +741,7 @@ The argument [tree] is used to know when candidate nested types should be traver
 (* TODO: figure out in which cases with nested inductives this isn't actually the identity *)
 Definition get_recargs_approx Σ ρ Γ (tree : wf_paths) (ind : inductive) (args : list term) : exc wf_paths := 
   (* starting with ra_env = [] seems safe because any unbound tRel will be assigned Norec *)
-  build_recargs_nested Σ ρ Γ [] tree ind args.
+  build_recargs_nested Σ ρ (Γ,[]) tree ind args.
 
 
 (** [restrict_spec_for_match Σ Γ spec rtf] restricts the size information in [spec] to what is allowed to flow through a match with return-type function (aka predicate) [rtf] in environment (Σ, Γ). *)
@@ -759,32 +758,34 @@ Definition get_recargs_approx Σ ρ Γ (tree : wf_paths) (ind : inductive) (args
  *)
 (* TODO: how does get_recargs_approx play into this?*)
 Definition restrict_spec_for_match Σ ρ Γ spec (rtf : term) : exc subterm_spec := 
-  if spec == Not_subterm then ret Not_subterm
-  else 
-  '(rtf_context, rtf) <- decompose_lam_assum Σ Γ rtf;;
-  (* if the return-type function is not dependent, no restriction is needed *)
-  if negb(rel_range_occurs 0 (length rtf_context) rtf) then ret spec 
-  else
-    (* decompose the rtf into context and rest and check if there is an inductive at the head *)
-    let Γ' := Γ ,,, rtf_context in
-    '(rtf_context', rtf') <- decompose_prod_assum Σ Γ rtf;;
-    let Γ'' := Γ' ,,, rtf_context' in
-    rtf'_whd <- whd_all Σ Γ rtf';;
-    let '(i, args) := decompose_app rtf'_whd in 
-    match i with 
-    | tInd ind _ => (* there's an inductive [ind] at the head under the lambdas, prods, and lets *)
-        match spec with 
-        | Dead_code => ret Dead_code
-        | Subterm size tree => 
-            (** intersect with approximation obtained by unfolding *)
-            (* TODO: when does get_recargs_approx actually do something other than identity? *)
-            recargs <- get_recargs_approx Σ ρ Γ tree ind args;;
-            recargs <- except (OtherErr "restrict_spec_for_match" "intersection failed: empty") $ inter_wf_paths tree recargs;;
-            ret (Subterm size recargs)
-        | _ => (** we already caught this case above *)
-            raise $ OtherErr "restrict_spec_for_match" "this should not be reachable" 
-        end
-    | _ => ret Not_subterm
+  match spec with
+  | Not_subterm | Internally_bound_subterm _ => ret spec
+  | _ => 
+    '(rtf_context, rtf) <- decompose_lam_assum Σ Γ rtf;;
+    (* if the return-type function is not dependent, no restriction is needed *)
+    if negb(rel_range_occurs 1 (length rtf_context) rtf) then ret spec 
+    else
+      (* decompose the rtf into context and rest and check if there is an inductive at the head *)
+      let Γ' := Γ ,,, rtf_context in
+      '(rtf_context', rtf') <- decompose_prod_assum Σ Γ rtf;;
+      let Γ'' := Γ' ,,, rtf_context' in
+      rtf'_whd <- whd_all Σ Γ rtf';;
+      let '(i, args) := decompose_app rtf'_whd in 
+      match i with 
+      | tInd ind _ => (* there's an inductive [ind] at the head under the lambdas, prods, and lets *)
+          match spec with 
+          | Dead_code => ret Dead_code
+          | Subterm l size tree => 
+              (** intersect with approximation obtained by unfolding *)
+              (* TODO: when does get_recargs_approx actually do something other than identity? *)
+              recargs <- get_recargs_approx Σ ρ Γ tree ind args;;
+              recargs <- except (OtherErr "restrict_spec_for_match" "intersection failed: empty") $ inter_wf_paths tree recargs;;
+              ret (Subterm l size recargs)
+          | _ => (** we already caught this case above *)
+              raise $ OtherErr "restrict_spec_for_match" "this should not be reachable" 
+          end
+      | _ => ret Not_subterm
+      end
     end.
 
 
