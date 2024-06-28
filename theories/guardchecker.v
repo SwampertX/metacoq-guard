@@ -983,13 +983,15 @@ Inductive check_subterm_result :=
 (** Check that a term [t] with subterm spec [spec] can be applied to a fixpoint whose recursive argument has subterm structure [tree]*)
 Definition check_is_subterm spec tree := 
   match spec with 
-  | Subterm Strict tree' => 
+  | Subterm need_reduce Strict tree' => 
       (* TODO: find an example where the inclusion checking is needed -- probably with nested inductives? *)
-      incl_wf_paths tree tree'
+      if incl_wf_paths tree tree' then NeedReduceSubterm need_reduce
+      else InvalidSubterm
   | Dead_code => 
       (** [spec] been constructed by elimination of an empty type, so this is fine *)
-      true
-  | _ => false
+      NeedReduceSubterm Natset.empty
+  | Not_subterm | Subterm _ Large _ => InvalidSubterm
+  | Internally_bound_subterm l => NeedReduceSubterm l
   end.
 
 
@@ -1012,10 +1014,10 @@ Definition check_is_subterm spec tree :=
     intersect it with the subterm tree for yi on the stack. 
   All other subterm information is truncated to Not_subterm. 
 *)
-Definition filter_stack_domain Σ ρ Γ (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
+Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
   '(rtf_context, rtf_body) <- decompose_lam_assum Σ Γ rtf;; 
   (** if the predicate is not dependent, no restriction is needed and we avoid building the recargs tree. *)
-  if negb (rel_range_occurs 0 (length rtf_context) rtf_body) then ret stack 
+  if negb (rel_range_occurs 1 (length rtf_context) rtf_body) then ret stack 
   else
     (** enter the rtf context *)
     let Γ' := Γ ,,, rtf_context in
@@ -1038,25 +1040,27 @@ Definition filter_stack_domain Σ ρ Γ (rtf : term) (stack : list stack_element
               (** it's an inductive *)
               (** inspect the corresponding subterm spec on the stack *)
               spec' <- stack_element_specif Σ ρ elem;;
-              match spec' with 
-              | Not_subterm | Dead_code => ret elem (* don't restrict. NOTE: might optimise to directly return the de-thunked spec we just computed? *)
-              | Subterm s path => 
-                  (** intersect with an approximation of the unfolded tree for [ind] *)
-                  (* TODO : when does get_recargs_approx give something other than identity ? *)
-                  recargs <- get_recargs_approx Σ ρ Γ path ind ty_args;;
-                  path' <- except (OtherErr "filter_stack_domain" "intersection of trees failed: empty") $ inter_wf_paths path recargs;;
-                  (* update the recargs tree to [path'] *)
-                  ret $ SArg (Subterm s path') 
-              end
+              sarg <- match spec' with 
+                | Not_subterm | Dead_code | Internally_bound_subterm _ => ret spec'
+                | Subterm l s path => 
+                    (** intersect with an approximation of the unfolded tree for [ind] *)
+                    (* TODO : when does get_recargs_approx give something other than identity ? *)
+                    recargs <- get_recargs_approx Σ ρ Γ path ind ty_args;;
+                    path' <- except (OtherErr "filter_stack_domain" "intersection of trees failed: empty") $ inter_wf_paths path recargs;;
+                    (* update the recargs tree to [path'] *)
+                    ret (Subterm l s path') 
+                end;;
+              ret $ SArg sarg
+
           | _ => 
               (** if not an inductive, the subterm information is not propagated *) 
-              ret $ SArg Not_subterm 
+              ret $ SArg (set_iota_specif nr Not_subterm)
           end;;
         rest <- filter_stack (Γ ,, d) t0 stack';;
         ret (elem' :: rest)
       | _, _ => 
           (** the rest of the stack is restricted to No_subterm, subterm information is not allowed to flow through *)
-          ret (List.fold_right (fun _ acc => SArg (Not_subterm) :: acc) [] stack)
+          ret (List.fold_right (fun _ acc => SArg (set_iota_specif nr Not_subterm) :: acc) [] stack)
       end
     in filter_stack Γ' rtf_body stack.
 
