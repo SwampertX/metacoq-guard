@@ -812,8 +812,9 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
       let stack' := push_stack_closures G stack l in
       (** get subterm info for the discriminant *)
       discriminant_spec <- subterm_specif Σ ρ G [] discriminant;;
-      (** get subterm info for the binders in the constructor branches of the discriminant *)
-      branches_binders_specs <- branches_binders_specif Σ G discriminant_spec ind;;
+      (** get subterm info for the binders in the constructor branches of the discriminant.
+        use [branches_binder_specif] for the original, (arguably) equivalent implementation *)
+      branches_binders_specs <- branches_specif Σ G discriminant_spec ind;;
       (** determine subterm info for the full branches *)
       (** YJ: why mapi on [map snd branches] instead of map on [branches]?
         maybe there is a deep meaning (eg. (fst branch) means something else,
@@ -877,17 +878,17 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
         let G' := push_fix_guard_env G mfix in
         (** we let the current fixpoint be a strict subterm *)
         (* TODO: is this sound? why is it needed? nested fixes? *)
-        let G' := update_guard_spec G' (num_fixes - mfix_ind) (Subterm Strict rectree) in
+        let G' := update_guard_spec G' (num_fixes - mfix_ind) (Subterm Natset.empty Strict rectree) in
         let decreasing_arg := cur_fix.(rarg) in
         let body := cur_fix.(dbody) in 
         (** number of abstractions (including the one for the decreasing arg) that the body is under *)
         let num_abstractions := S decreasing_arg in
         (** split into context up to (including) the decreasing arg and the rest of the body *)
         '(context, body') <- decompose_lam_n_assum Σ G'.(loc_env) num_abstractions body;;
-        (** add the arguments as Not_subterm *)
-        let G'' := push_context_guard_env G' context in 
         (** push the arguments [l] _ in guard env [G] _ *)
         let stack' := push_stack_closures G stack l in
+        (** add the arguments as Not_subterm *)
+        let G'' := push_context_guard_env G' context in 
         (** before we go on to check the body: if there are enough arguments on the stack, 
           we can use the subterm information on the stack for the decreasing argument of 
           the nested fixpoint (instead of taking Not_subterm) *)
@@ -896,7 +897,7 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
           decreasing_arg_stackel <- except (IndexErr "subterm_specif" "stack' too short" decreasing_arg) $ 
             nth_error stack' decreasing_arg;;
           arg_spec <- stack_element_specif Σ ρ decreasing_arg_stackel;;
-          let G'' := update_guard_spec G'' 0 arg_spec in 
+          let G'' := update_guard_spec G'' 1 arg_spec in 
           subterm_specif Σ ρ G'' [] body'
   | tLambda x ty body => 
       (* TODO *)
@@ -908,28 +909,23 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
      subterm_specif Σ ρ (push_guard_env G (x, ty, spec)) stack' body 
   | tEvar _ _ => 
       (* evars are okay *)
-      (*ret Dead_code*)
-      raise $ OtherErr "subterm_specif" "the guardedness checker does not handle evars"
+      ret Dead_code
+      (* raise $ OtherErr "subterm_specif" "the guardedness checker does not handle evars" *)
   | tProj p t => 
       (** compute the spec for t *)
       (** TODO: why do we do this with the stack (instead of the empty stack)?
         shouldn't _the result_ of the projection be applied to the elements of the stack?? *)
       t_spec <- subterm_specif Σ ρ G stack t;;
       match t_spec with 
-      | Subterm _ paths => 
-          arg_trees <- wf_paths_constr_args_sizes paths;;
-          match arg_trees with 
-          | [arg_tree] => 
+      | Subterm _ _ paths => 
+          arg_trees <- wf_paths_constr_args_sizes paths 0;;
               (** get the tree of the projected argument *)
-              let proj_arg := p.(proj_arg) in
-              proj_arg_tree <- except (IndexErr "subterm_specif" "malformed recursive tree" proj_arg) $ 
-                nth_error arg_tree proj_arg;;
-                (** make a spec out of it *)
-              spec_of_tree proj_arg_tree
-          | _ => raise $ OtherErr "subterm_specif" "projection on type having a number of constructors ≠ 1"
-          end
-      | Dead_code => ret Dead_code
-      | Not_subterm => ret Not_subterm
+          let proj_arg := p.(proj_arg) in
+          proj_arg_tree <- except (IndexErr "subterm_specif" "malformed recursive tree" proj_arg) $ 
+            nth_error arg_trees proj_arg;;
+            (** make a spec out of it *)
+          spec_of_tree proj_arg_tree
+      | Dead_code | Not_subterm | Internally_bound_subterm _ => ret t_spec
       end
   | _ => ret Not_subterm
   end
@@ -937,7 +933,7 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
 (** given a stack element, compute its subterm specification *)
 with stack_element_specif Σ ρ stack_el {struct stack_el} : exc subterm_spec := 
   match stack_el with 
-  | SClosure G t => 
+  | SClosure _ G _ t => 
       (*trace ((thunk (print_id ((Σ, G.(loc_env), t)))));;*)
       subterm_specif Σ ρ G [] t
   | SArg spec => ret spec
@@ -951,6 +947,38 @@ with extract_stack_hd Σ ρ stack {struct stack} : exc (subterm_spec * list stac
       spec <- stack_element_specif Σ ρ h;;
       ret (spec, stack)
   end.
+
+Definition set_iota_specif nr spec := match spec with
+  | Not_subterm => if Nat.leb 1 nr then Internally_bound_subterm (Natset.singleton nr) else Not_subterm
+  | spec => spec
+  end.
+
+Definition illegal_rec_call G fixpt elt := match elt with
+  | SClosure _ G_arg _ arg =>
+    let le_lt_vars :=
+      let '(_, le_vars, lt_vars) :=
+        List.fold_left (fun '(i, le, lt) sbt => match sbt with
+          | Subterm _ Strict _ | Dead_code           => (S i, le,    i::lt)
+          | Subterm _ Large _                        => (S i, i::le, lt)
+          | Internally_bound_subterm _ | Not_subterm => (S i, le,    lt)
+          end) G.(guarded_env) (1, [], [])
+      in (le_vars, lt_vars)
+    in RecursionOnIllegalTerm fixpt (G_arg.(loc_env), arg) le_lt_vars
+  | SArg _ =>
+    (* Typically the case of a recursive call encapsulated under a
+       rewriting before been applied to the parameter of a constructor *)
+    NotEnoughArgumentsForFixCall fixpt
+  end.
+
+Definition set_need_reduce_one Γ nr err rs := update_list rs (#|rs| - nr) (NeedReduce Γ err).
+
+Definition set_need_reduce Γ l err rs := Natset.fold (fun n => set_need_reduce_one Γ n err) l rs.
+
+Definition set_need_reduce_top Γ err rs := set_need_reduce_one Γ (List.length rs) err rs.
+
+Inductive check_subterm_result :=
+  | InvalidSubterm
+  | NeedReduceSubterm (l : Natset.t). (* empty = NoNeedReduce *)
 
 (** Check that a term [t] with subterm spec [spec] can be applied to a fixpoint whose recursive argument has subterm structure [tree]*)
 Definition check_is_subterm spec tree := 
