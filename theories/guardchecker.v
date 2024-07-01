@@ -1064,6 +1064,87 @@ Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_elem
       end
     in filter_stack Γ' rtf_body stack.
 
+Definition find_uniform_parameters recindx nargs bodies :=
+  let nbodies := List.length bodies in
+  let min_indx := List.fold_left Nat.min nargs recindx in
+  (* We work only on the i-th body but are in the context of n bodies *)
+  let fix aux i k nuniformparams c :=
+    let '(f, l) := decompose_app c in
+    match f with
+    | tRel n =>
+      (* A recursive reference to the i-th body *)
+      if n == (nbodies + k - i) then
+        fold_left (fun '(j, nuniformparams) a =>
+            match a with
+            | tRel m => if m == (k - j) then
+              (* a reference to the j-th parameter *)
+              nuniformparams else Nat.min j nuniformparams
+            | _ =>
+              (* not a parameter: this puts a bound on the size of an extrudable prefix of uniform arguments *)
+              Nat.min j nuniformparams
+            end) l (0, nuniformparams)
+      else nuniformparams
+    | _ => fold_term_with_binders S (aux i) k nuniformparams c
+    end
+  in
+  fold_left (fun '(i, acc) => aux i 0 acc) bodies min_indx.
+
+(** Given a fixpoint [fix f x y z n := phi(f x y u t, ..., f x y u' t')] structural recursive on [n],
+    with [z] not uniform we build in context [x:A, y:B(x), z:C(x,y)] a term
+    [fix f z n := phi(f u t, ..., f u' t')], say [psi], of some type
+    [forall (z:C(x,y)) (n:I(x,y,z)), T(x,y,z,n)], so that
+    [fun x y z => psi z] is of same type as the original term *)
+
+let drop_uniform_parameters nuniformparams bodies =
+  let nbodies = Array.length bodies in
+  let rec aux i k c =
+    let f, l = decompose_app_list c in
+    match kind f with
+    | Rel n ->
+      (* A recursive reference to the i-th body *)
+      if Int.equal n (nbodies + k - i) then
+        let new_args = List.skipn_at_best nuniformparams l in
+        Term.applist (f, new_args)
+      else
+        c
+    | _ -> map_with_binders succ (aux i) k c
+  in
+  Array.mapi (fun i -> aux i 0) bodies
+
+let filter_fix_stack_domain nr decrarg stack nuniformparams =
+  let rec aux i nuniformparams stack =
+    match stack with
+    | [] -> []
+    | a :: stack ->
+      let uniform, nuniformparams = if nuniformparams = 0 then false, 0 else true, nuniformparams -1 in
+      let a =
+        if uniform || Int.equal i decrarg then a
+        else
+          (* deactivate the status of non-uniform parameters since we
+             cannot guarantee that they are preserve in the recursive
+             calls *)
+          SArg (set_iota_specif nr (lazy Not_subterm)) in
+      a :: aux (i+1) nuniformparams stack
+  in aux 0 nuniformparams stack
+
+let pop_argument ?evars needreduce renv elt stack x a b =
+  match needreduce, elt with
+  | NoNeedReduce, SClosure (NoNeedReduce, _, n, c) ->
+    (* Neither function nor args have rec calls on internally bound variables *)
+    let spec = stack_element_specif ?evars elt in
+    (* Thus, args do not a priori require to be rechecked, so we push a let *)
+    (* maybe the body of the let will have to be locally expanded though, see Rel case *)
+    push_let renv (x,lift n c,a,spec), lift1_stack stack, b
+  | _, SClosure (_, _, n, c) ->
+    (* Either function or args have rec call on internally bound variables *)
+    renv, stack, subst1 (lift n c) b
+  | _, SArg spec ->
+    (* Going down a case branch *)
+    push_var renv (x,a,spec), lift1_stack stack, b
+
+let judgment_of_fixpoint (_, types, bodies) =
+  Array.map2 (fun typ body -> { uj_val = body ; uj_type = typ }) types bodies
+
 Definition bruijn_print Σ Γ t :=
   print_term Σ (ctx_names Γ) true t.
 

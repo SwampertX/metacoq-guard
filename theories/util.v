@@ -106,3 +106,51 @@ Fixpoint list_lift_option {X} (l : list (option X)) : option (list X) :=
 
 Infix "<?" := Nat.ltb (at level 70).
 Infix "=?" := Nat.eqb (at level 70).
+
+
+(* [fold_constr_with_binders g f n acc c] folds [f n] on the immediate
+   subterms of [c] starting from [acc] and proceeding from left to
+   right according to the usual representation of the constructions as
+   [fold_constr] but it carries an extra data [n] (typically a lift
+   index) which is processed by [g] (which typically add 1 to [n]) at
+   each binder traversal; it is not recursive *)
+
+From MetaCoq.Template Require Import Ast.
+
+Fixpoint iterate {A : Type} (f : A -> A) (n : nat) (x : A) : A :=
+match n with O => x | S n' => iterate f n' (f x) end.
+
+(* Counterpart: [Constr.fold_constr_with_binders] *)
+Definition fold_term_with_binders {A B : Type} (g : A -> A)
+  (f : A -> B -> term -> B) (n : A) (acc : B) (c : term) :=
+  match c with
+  | (tRel _ | tVar _   | tSort _ | tConst _ _ | tInd _ _
+    | tConstruct _ _ _ | tInt _ | tFloat _) => acc
+  | tCast c _ t => f n (f n acc c) t
+  | tProd _na t c => f (g n) (f n acc t) c
+  | tLambda  _na t c => f (g n) (f n acc t) c
+  | tLetIn _na b t c => f (g n) (f n (f n acc b) t) c
+  | tApp c l => fold_left (f n) l (f n acc c)
+  | tProj _p c => f n acc c
+  | tEvar _ l => fold_left (f n) l acc
+  (* | Case (_,_,pms,(p,_),iv,c,bl) -> *)
+  | tCase _ci ti c bl => (* TODO: should p include the context? *)
+    let pms : list term := ti.(pparams) in
+    let nas : list aname := ti.(pcontext) in
+    let p : term := ti.(preturn) in
+    let fold_ctx n (acc : B) (nas_c : list aname * term) : B :=
+      let '(nas, c) := nas_c in
+      f (iterate g (length nas) n) acc c
+    in
+    let a : B := fold_ctx n (fold_left (f n) pms acc) (nas, p) in
+    fold_left (fun acc br => fold_ctx n acc (br.(bcontext),br.(bbody))) bl (f n a c)
+  (* | Fix (_,(_,tl,bl)) => *)
+  | tFix fixpt _ | tCoFix fixpt _ =>
+      let tl : list term := map dtype fixpt in
+      let bl : list term := map dbody fixpt in
+      let n' : A := iterate g (length tl) n in
+      let fd : list (term * term) := map2 (fun t b => (t,b)) tl bl in
+      fold_left (fun acc '(t,b) => f n' (f n acc t) b) fd acc
+  | tArray _u t def ty  =>
+    f n (f n (fold_left (f n) t acc) def) ty
+  end.
