@@ -19,7 +19,7 @@ Fixpoint update_list {X} (l : list X) index x :=
   end.
 
 Section Except. 
-  Context { Y : Type}. 
+  Context {Y : Type}. 
   (*Notation "'exc' X" := (excOn Y X) (at level 100). *)
   Context {M : Type -> Type} {M_monad : Monad M}. 
 
@@ -168,3 +168,107 @@ Definition map_i {A B} (f : nat -> A -> B) (l : list A) : list B :=
     | hd :: tl => aux tl (S i) (f i hd :: acc)
     end
   in aux l 0 [].
+
+(* Since the "return predicate" in Coq kernel is of type [list aname * term * wf_path],
+  while MetaCoq does not keep track of [wf_path],
+  the [map_return_predicate] here corresponds to [map_under_context_with_binders], its subfunction.
+  
+  Furthermore, since the first projection [list aname] is only used for its length,
+  we refine the function to immediately take [ctx_len] to work better with [map_predicate].
+*)
+Definition map_return_predicate {A} (g : A -> A)
+  (f : A -> term -> term) (l : A) ctx_len (p : term) : term :=
+  let l := iterate g ctx_len l in f l p.
+
+Definition map_branches_with_binders {A : Type} (g : A -> A)
+  (f : A -> term -> term) (l : A) (bl : list (branch term)) : list (branch term) :=
+  map (fun b => map_branch (map_return_predicate g f l #|b.(bcontext)|) b) bl.
+
+(* [map_with_binders g f n c] maps [f n] on the immediate
+   subterms of [c]; it carries an extra data [n] (typically a lift
+   index) which is processed by [g] (which typically add 1 to [n]) at
+   each binder traversal; it is not recursive and the order with which
+   subterms are processed is not specified *)
+
+Definition map_with_binders {A B : Type} (g : A -> A)
+  (f : A -> term -> term) (l : A) (c0 : term) : term :=
+  match c0 with
+  | (tRel _ | tVar _   | tSort _ | tConst _ _ | tInd _ _
+    | tConstruct _ _ _ | tInt _ | tFloat _ ) => c0
+
+  | tCast c k t =>
+    let c' := f l c in
+    let t' := f l t in
+    if c' == c && t' == t then c0
+    else tCast c' k t'
+
+  | tProd na t c =>
+    let t' := f l t in
+    let c' := f (g l) c in
+    if t' == t && c' == c then c0
+    else tProd na t' c'
+
+  | tLambda na t c =>
+    let t' := f l t in
+    let c' := f (g l) c in
+    if t' == t && c' == c then c0
+    else tLambda na t' c'
+
+  | tLetIn na b t c =>
+    let b' := f l b in
+    let t' := f l t in
+    let c' := f (g l) c in
+    if b' == b && t' == t && c' == c then c0
+    else tLetIn na b' t' c'
+
+  | tApp c al =>
+    let c' := f l c in
+    let al' := map f l al in
+    if c' == c && al' == al then c0
+    else mkApp (c', al')
+
+  | tProj p t =>
+    let t' := f l t in
+    if t' == t then c0
+    else tProj p t'
+
+  | tEvar e al =>
+    let al' := map (fun c => f l c) al in
+    if al' == al then c0
+    else tEvar e al'
+  
+  | tCase ci ti c bl =>
+    let ctx_len := #|ti.(pcontext)| in
+    let ti' := map_predicate (uf := id) (paramf := f l)
+                (preturnf := map_return_predicate g f l ctx_len)
+                ti
+    in
+    let c' := f l c in
+    let bl' := map_branches_with_binders g f l bl in
+    if ti == ti' && c' == c && bl' == bl then c0
+    else tCase ci ti' c' bl'
+
+  | tFix ln fixpt =>
+    let tl : list term := map dtype fixpt in
+    let tl' := map f l tl in
+    let bl : list term := map dbody fixpt in
+    let bl' := map f l' bl in
+    let fixpt' := if tl == tl' && bl == bl' then fixpt
+      else 
+    let l' := iterate g (length tl) l in
+    if tl' == tl && bl' == bl then c0
+    else tFix ln (lna,tl',bl')
+
+  | CoFix(ln,(lna,tl,bl)) =>
+    let tl' := Array.Fun1.Smart.map f l tl in
+    let l' := iterate g (Array.length tl) l in
+    let bl' := Array.Fun1.Smart.map f l' bl in
+    mkCoFix (ln,(lna,tl',bl'))
+
+  | Array(u,t,def,ty) =>
+    let t' := Array.Fun1.Smart.map f l t in
+    let def' := f l def in
+    let ty' := f l ty in
+    if def'==def && t==t' && ty==ty' then c0
+    else mkArray(u,t',def',ty')
+  end.
