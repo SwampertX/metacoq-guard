@@ -1064,17 +1064,18 @@ Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_elem
       end
     in filter_stack Γ' rtf_body stack.
 
-Definition find_uniform_parameters recindx nargs bodies :=
+#[bypass_check(guard)]
+Definition find_uniform_parameters (recindx : nat) (nargs : list nat) (bodies : list term) : nat :=
   let nbodies := List.length bodies in
   let min_indx := List.fold_left Nat.min nargs recindx in
   (* We work only on the i-th body but are in the context of n bodies *)
-  let fix aux i k nuniformparams c :=
+  let fix aux (i k nuniformparams : nat) (c : term) {struct c} : nat :=
     let '(f, l) := decompose_app c in
     match f with
     | tRel n =>
       (* A recursive reference to the i-th body *)
       if n == (nbodies + k - i) then
-        fold_left (fun '(j, nuniformparams) a =>
+        fold_left_i (fun j nuniformparams a =>
             match a with
             | tRel m => if m == (k - j) then
               (* a reference to the j-th parameter *)
@@ -1082,12 +1083,12 @@ Definition find_uniform_parameters recindx nargs bodies :=
             | _ =>
               (* not a parameter: this puts a bound on the size of an extrudable prefix of uniform arguments *)
               Nat.min j nuniformparams
-            end) l (0, nuniformparams)
+            end) l nuniformparams
       else nuniformparams
     | _ => fold_term_with_binders S (aux i) k nuniformparams c
     end
   in
-  fold_left (fun '(i, acc) => aux i 0 acc) bodies min_indx.
+  fold_left_i (fun i => aux i 0) bodies min_indx.
 
 (** Given a fixpoint [fix f x y z n := phi(f x y u t, ..., f x y u' t')] structural recursive on [n],
     with [z] not uniform we build in context [x:A, y:B(x), z:C(x,y)] a term
@@ -1095,21 +1096,20 @@ Definition find_uniform_parameters recindx nargs bodies :=
     [forall (z:C(x,y)) (n:I(x,y,z)), T(x,y,z,n)], so that
     [fun x y z => psi z] is of same type as the original term *)
 
-let drop_uniform_parameters nuniformparams bodies =
-  let nbodies = Array.length bodies in
-  let rec aux i k c =
-    let f, l = decompose_app_list c in
-    match kind f with
-    | Rel n ->
+Definition drop_uniform_parameters (nuniformparams : nat) (bodies : list term) : list term =
+  let nbodies : nat := #|bodies| in
+  let fix aux (i k : nat) (c : term) {struct c} :=
+    let '(f, l) := decompose_app c in
+    match f with
+    | tRel n =>
       (* A recursive reference to the i-th body *)
-      if Int.equal n (nbodies + k - i) then
-        let new_args = List.skipn_at_best nuniformparams l in
-        Term.applist (f, new_args)
-      else
-        c
-    | _ -> map_with_binders succ (aux i) k c
-  in
-  Array.mapi (fun i -> aux i 0) bodies
+      if n == (nbodies + k - i) then
+        let new_args := skipn nuniformparams l in
+        mkApps f new_args
+      else c
+    | _ => map_with_binders succ (aux i) k c
+    end
+  in mapi (fun i => aux i 0) bodies.
 
 let filter_fix_stack_domain nr decrarg stack nuniformparams =
   let rec aux i nuniformparams stack =

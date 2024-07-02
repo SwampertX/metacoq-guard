@@ -1,7 +1,7 @@
 From MetaCoq.Utils Require Import utils.
 Require Import MetaCoq.Guarded.Except.
 
-Definition map2_i { A B C} (f : nat -> A -> B -> C) (a : list A) (b : list B) := 
+Definition map2_i {A B C} (f : nat -> A -> B -> C) (a : list A) (b : list B) := 
   let map2' := fix rec a b n := 
      match a, b with
      | a0 :: a, b0 :: b => f n a0 b0 :: rec a b (S n)
@@ -154,3 +154,17 @@ Definition fold_term_with_binders {A B : Type} (g : A -> A)
   | tArray _u t def ty  =>
     f n (f n (fold_left (f n) t acc) def) ty
   end.
+
+Definition fold_left_i {A B} (f : nat -> A -> B -> A) (l : list B) (init : A) : A :=
+  let fix aux l i acc := match l with 
+    | [] => acc
+    | hd :: tl => aux tl (S i) (f i acc hd)
+    end
+  in aux l 0 init.
+
+Definition map_i {A B} (f : nat -> A -> B) (l : list A) : list B :=
+  let fix aux l i acc := match l with
+    | [] => acc
+    | hd :: tl => aux tl (S i) (f i hd :: acc)
+    end
+  in aux l 0 [].
