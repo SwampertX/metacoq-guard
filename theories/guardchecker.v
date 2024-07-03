@@ -217,18 +217,24 @@ Definition init_guard_env Γ recarg tree :=
   |}.
 
 (** Push a binder with name [na], type [type] and subterm specification [spec] *)
-(* Counterpart: [push_var, push_let] *)
-Definition push_guard_env G '(na, type, spec) := 
+Definition push_var G '(na, type, spec) := 
   {|
     loc_env := G.(loc_env) ,, vass na type;
     rel_min_fix := S (G.(rel_min_fix));
     guarded_env := spec :: G.(guarded_env);
   |}.
 
+Definition push_let G '(na, c, type, spec) := 
+  {|
+    loc_env := G.(loc_env) ,, vdef na c type;
+    rel_min_fix := S (G.(rel_min_fix));
+    guarded_env := spec :: G.(guarded_env);
+  |}.
+
 (** add a new inner variable which is not a subterm *)
 (* Shorthand, no counterpart *)
-Definition push_nonrec_guard_env G '(na, type) := 
-  push_guard_env G (na, type, Not_subterm).
+Definition push_var_nonrec G '(na, type) := 
+  push_var G (na, type, Not_subterm).
 
 (** Update the subterm spec of dB [i] to [new_spec] *)
 (* Counterpart: [assign_var_spec] *)
@@ -610,7 +616,7 @@ Fixpoint build_recargs_nested Σ ρ ienv (tree : wf_paths) (ind: inductive) (arg
     In the case that there are no mutual inductives, we use the argument tree [tree].*)
   trees <- (if num_mut_inds == 1 
     then arg_sizes <- wf_paths_all_constr_args_sizes tree;; ret [arg_sizes]
-    else unwrap $ map (fun tree => wf_paths_all_constr_args_sizes tree) static_trees);;
+    else unwrap $ map wf_paths_all_constr_args_sizes static_trees);;
 
   (** function: make the recargs tree for the [j]-th inductive in the block with body [oib].
     Essentially, we instantiate the corresponding recargs tree in [trees] with the parameters in [inst_unif]. *)
@@ -906,7 +912,7 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
      assert (l == []) (OtherErr "subterm_specif" "reduction is broken");;
      (** get the subterm spec of what the lambda would be applied to (or Not_subterm if [stack] is empty)*)
      '(spec, stack') <- extract_stack_hd Σ ρ stack;;
-     subterm_specif Σ ρ (push_guard_env G (x, ty, spec)) stack' body 
+     subterm_specif Σ ρ (push_var G (x, ty, spec)) stack' body 
   | tEvar _ _ => 
       (* evars are okay *)
       ret Dead_code
@@ -948,7 +954,7 @@ with extract_stack_hd Σ ρ stack {struct stack} : exc (subterm_spec * list stac
       ret (spec, stack)
   end.
 
-Definition set_iota_specif nr spec := match spec with
+Definition set_iota_specif (nr : nat) spec := match spec with
   | Not_subterm => if Nat.leb 1 nr then Internally_bound_subterm (Natset.singleton nr) else Not_subterm
   | spec => spec
   end.
@@ -1096,9 +1102,9 @@ Definition find_uniform_parameters (recindx : nat) (nargs : list nat) (bodies : 
     [forall (z:C(x,y)) (n:I(x,y,z)), T(x,y,z,n)], so that
     [fun x y z => psi z] is of same type as the original term *)
 
-Definition drop_uniform_parameters (nuniformparams : nat) (bodies : list term) : list term =
+Definition drop_uniform_parameters (nuniformparams : nat) (bodies : list term) : list term :=
   let nbodies : nat := #|bodies| in
-  let fix aux (i k : nat) (c : term) {struct c} :=
+  let fix aux (i k : nat) (c : term) {struct c} : term :=
     let '(f, l) := decompose_app c in
     match f with
     | tRel n =>
@@ -1107,43 +1113,49 @@ Definition drop_uniform_parameters (nuniformparams : nat) (bodies : list term) :
         let new_args := skipn nuniformparams l in
         mkApps f new_args
       else c
-    | _ => map_with_binders succ (aux i) k c
+    | _ => map_with_binders (B := term) S (aux i) k c
     end
   in mapi (fun i => aux i 0) bodies.
 
-let filter_fix_stack_domain nr decrarg stack nuniformparams =
-  let rec aux i nuniformparams stack =
+
+Definition filter_fix_stack_domain (nr decrarg : nat) stack nuniformparams : list stack_element :=
+  let fix aux (i nuniformparams : nat) stack :=
     match stack with
-    | [] -> []
-    | a :: stack ->
-      let uniform, nuniformparams = if nuniformparams = 0 then false, 0 else true, nuniformparams -1 in
-      let a =
-        if uniform || Int.equal i decrarg then a
+    | [] => []
+    | a :: stack =>
+      let '(uniform, nuniformparams') :=
+        if Nat.eqb nuniformparams 0 then (false, 0) else (true, pred nuniformparams) in
+      let a :=
+        if uniform || Nat.eqb i decrarg then a
         else
           (* deactivate the status of non-uniform parameters since we
              cannot guarantee that they are preserve in the recursive
              calls *)
-          SArg (set_iota_specif nr (lazy Not_subterm)) in
-      a :: aux (i+1) nuniformparams stack
-  in aux 0 nuniformparams stack
+          SArg (set_iota_specif nr Not_subterm) in
+      a :: aux (S i) nuniformparams' stack
+    end
+  in aux 0 nuniformparams stack.
 
-let pop_argument ?evars needreduce renv elt stack x a b =
+Definition pop_argument Σ ρ needreduce G elt stack (x : aname) (a b : term)
+  : exc (guard_env * list (stack_element) * term) :=
   match needreduce, elt with
-  | NoNeedReduce, SClosure (NoNeedReduce, _, n, c) ->
+  | NoNeedReduce, SClosure NoNeedReduce _ n c =>
     (* Neither function nor args have rec calls on internally bound variables *)
-    let spec = stack_element_specif ?evars elt in
+    spec <- stack_element_specif Σ ρ elt;;
     (* Thus, args do not a priori require to be rechecked, so we push a let *)
     (* maybe the body of the let will have to be locally expanded though, see Rel case *)
-    push_let renv (x,lift n c,a,spec), lift1_stack stack, b
-  | _, SClosure (_, _, n, c) ->
+    ret (push_let G (x,lift0 n c,a,spec), lift_stack 1 stack, b)
+  | _, SClosure _ _ n c =>
     (* Either function or args have rec call on internally bound variables *)
-    renv, stack, subst1 (lift n c) b
-  | _, SArg spec ->
+    ret (G, stack, subst10 (lift0 n c) b)
+  | _, SArg spec =>
     (* Going down a case branch *)
-    push_var renv (x,a,spec), lift1_stack stack, b
+    ret (push_var G (x,a,spec), lift_stack 1 stack, b)
+  end.
 
-let judgment_of_fixpoint (_, types, bodies) =
-  Array.map2 (fun typ body -> { uj_val = body ; uj_type = typ }) types bodies
+(* TODO: typing judgement. probably useless, not sure *)
+(* Definition judgment_of_fixpoint (_, types, bodies) :=
+  Array.map2 (fun typ body -> { uj_val = body ; uj_type = typ }) types bodies *)
 
 Definition bruijn_print Σ Γ t :=
   print_term Σ (ctx_names Γ) true t.
@@ -1371,7 +1383,7 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
         (** check the type *)
         check_rec_call' G [] ty;;
         (** check the body: x is not a subterm *)
-        check_rec_call' (push_nonrec_guard_env G (x, ty)) [] body
+        check_rec_call' (push_var_nonrec G (x, ty)) [] body
 
     | tCoFix mfix_inner fix_ind => 
         (** check the arguments *)
@@ -1435,7 +1447,7 @@ with check_nested_fix_body (num_fixes : nat) (decreasing_args : list nat) trees
         check_rec_call' (push_guard_env G (x, ty, sub_spec)) [] body 
       | S n => 
         (** push to env as non-recursive variable and continue recursively *)
-        let G' := push_nonrec_guard_env G (x, ty) in  
+        let G' := push_var_nonrec G (x, ty) in  
         check_nested_fix_body num_fixes decreasing_args trees Σ ρ G' n sub_spec body
       end
   | _ => raise $ OtherErr "check_nested_fix_body" "illformed inner fix body"
