@@ -1,5 +1,7 @@
-From MetaCoq.Utils Require Import utils.
-Require Import MetaCoq.Guarded.Except.
+From MetaCoq.Utils Require Import utils ReflectEq.
+From MetaCoq.Common Require Import Reflect Universes.
+From MetaCoq.Template Require Import ReflectAst.
+From MetaCoq.Guarded Require Import Except.
 
 Definition map2_i {A B C} (f : nat -> A -> B -> C) (a : list A) (b : list B) := 
   let map2' := fix rec a b n := 
@@ -190,6 +192,43 @@ Definition map_branches_with_binders {A : Type} (g : A -> A)
    each binder traversal; it is not recursive and the order with which
    subterms are processed is not specified *)
 
+Local Infix "==?" := eqb (at level 20).
+
+Definition eqb_branch (br1 br2 : branch term) : bool :=
+  br1.(bcontext) ==? br2.(bcontext) && br1.(bbody) ==? br2.(bbody).
+
+Instance reflect_branch : ReflectEq (branch term).
+Proof.
+  refine {| eqb := eqb_branch |}.
+  intros [nas1 t1]. induction nas1 as [| a1 nas1 IHnas1]; intros [[|a2 nas2] t2].
+  all : unfold eqb_branch; simpl.
+  - destruct (t1 ==? t2) eqn:Eqt.
+    -- apply eqb_eq in Eqt; subst; now constructor.
+    -- constructor. intros contra. inversion contra; subst.
+      rewrite (eqb_refl t2) in Eqt. inversion Eqt.
+  - constructor. intros contra. inversion contra.
+  - constructor. intros contra. inversion contra.
+  - destruct ((a1 :: nas1) ==? (a2 :: nas2)) eqn:Eqnas.
+    all : destruct (t1 ==? t2) eqn:Eqt; simpl; constructor.
+    -- apply eqb_eq in Eqnas. apply eqb_eq in Eqt. now subst.
+    -- apply eqb_eq in Eqnas. rewrite Eqnas.
+      intros contra. inversion contra; subst.
+      rewrite (eqb_refl t2) in Eqt. inversion Eqt.
+    -- apply eqb_eq in Eqt; subst.
+      intros contra. inversion contra; subst.
+      rewrite (eqb_refl) in Eqnas. inversion Eqnas.
+    -- intros contra. inversion contra; subst.
+      rewrite (eqb_refl) in Eqnas. inversion Eqnas.
+Qed.
+
+(* Definition eqb_predicate :=  *)
+
+Instance reflect_predicate : ReflectEq (predicate term).
+Proof.
+  refine {| eqb := eqb_predicate Instance.eqb eqb |}.
+  intros [] [].
+Admitted.
+
 Definition map_with_binders {A B : Type} (g : A -> A)
   (f : A -> term -> term) (l : A) (c0 : term) : term :=
   match c0 with
@@ -199,33 +238,33 @@ Definition map_with_binders {A B : Type} (g : A -> A)
   | tCast c k t =>
     let c' := f l c in
     let t' := f l t in
-    if c' == c && t' == t then c0
+    if c' ==? c && t' ==? t then c0
     else tCast c' k t'
 
   | tProd na t c =>
     let t' := f l t in
     let c' := f (g l) c in
-    if t' == t && c' == c then c0
+    if t' ==? t && c' ==? c then c0
     else tProd na t' c'
 
   | tLambda na t c =>
     let t' := f l t in
     let c' := f (g l) c in
-    if t' == t && c' == c then c0
+    if t' ==? t && c' ==? c then c0
     else tLambda na t' c'
 
   | tLetIn na b t c =>
     let b' := f l b in
     let t' := f l t in
     let c' := f (g l) c in
-    if b' == b && t' == t && c' == c then c0
+    if b' ==? b && t' ==? t && c' ==? c then c0
     else tLetIn na b' t' c'
 
   | tApp c al =>
     let c' := f l c in
-    let al' := map f l al in
-    if c' == c && al' == al then c0
-    else mkApp (c', al')
+    let al' := map (f l) al in
+    if c' ==? c && al' ==? al then c0
+    else tApp c' al'
 
   | tProj p t =>
     let t' := f l t in
@@ -239,36 +278,22 @@ Definition map_with_binders {A B : Type} (g : A -> A)
   
   | tCase ci ti c bl =>
     let ctx_len := #|ti.(pcontext)| in
-    let ti' := map_predicate (uf := id) (paramf := f l)
-                (preturnf := map_return_predicate g f l ctx_len)
-                ti
-    in
+    let ti' := map_predicate id (f l) (map_return_predicate g f l ctx_len) ti in
     let c' := f l c in
     let bl' := map_branches_with_binders g f l bl in
-    if ti == ti' && c' == c && bl' == bl then c0
+    if ti ==? ti' && c' ==? c && bl' ==? bl then c0
     else tCase ci ti' c' bl'
 
-  | tFix ln fixpt =>
-    let tl : list term := map dtype fixpt in
-    let tl' := map f l tl in
-    let bl : list term := map dbody fixpt in
-    let bl' := map f l' bl in
-    let fixpt' := if tl == tl' && bl == bl' then fixpt
-      else 
-    let l' := iterate g (length tl) l in
-    if tl' == tl && bl' == bl then c0
-    else tFix ln (lna,tl',bl')
+  | tFix branches idx | tCoFix branches idx =>
+    let l' := iterate g #|branches| l in
+    let branches' := map (map_def (f l) (f l')) branches in
+    if branches == branches' then c0
+    else tFix branches' idx
 
-  | CoFix(ln,(lna,tl,bl)) =>
-    let tl' := Array.Fun1.Smart.map f l tl in
-    let l' := iterate g (Array.length tl) l in
-    let bl' := Array.Fun1.Smart.map f l' bl in
-    mkCoFix (ln,(lna,tl',bl'))
-
-  | Array(u,t,def,ty) =>
-    let t' := Array.Fun1.Smart.map f l t in
+  | tArray u arr def ty =>
+    let arr' := map (f l) arr in
     let def' := f l def in
     let ty' := f l ty in
-    if def'==def && t==t' && ty==ty' then c0
-    else mkArray(u,t',def',ty')
+    if def' ==? def && arr ==? arr' && ty ==? ty' then c0
+    else tArray u arr' def' ty'
   end.
