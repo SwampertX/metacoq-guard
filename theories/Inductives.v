@@ -20,12 +20,20 @@ Notation loc := string (only parsing).
 (** ** Trace-monad based *)
 From MetaCoq.Guarded Require Export Trace. 
 
+(** TODO YJ: what do the parameters mean? *)
+Inductive fix_guard_error :=
+  | NotEnoughAbstractionInFixBody
+  | RecursionNotOnInductiveType : term -> fix_guard_error
+  | RecursionOnIllegalTerm : nat -> (context * term) -> (list nat * list nat) -> fix_guard_error
+  | NotEnoughArgumentsForFixCall : nat -> fix_guard_error
+  | FixpointOnIrrelevantInductive.
+
 Inductive guard_exc := 
   | ProgrammingErr (w : loc) (s : string)
   | OtherErr (w : loc) (s : string)
   | EnvErr (w: loc) (kn : kername) (s : string)
   | IndexErr (w : loc) (s : string) (i : nat)
-  | GuardErr (w : loc) (s : string)
+  | GuardErr (w : loc) (s : string) (e : fix_guard_error)
   | PositivityError (w : loc) (s : string)
   | TimeoutErr. 
 

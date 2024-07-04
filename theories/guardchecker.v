@@ -2,7 +2,7 @@ From MetaCoq.Utils Require Import utils MCMSets.
 From MetaCoq.Common Require Import BasicAst Universes Environment Reflect.
 From MetaCoq.Template Require Import Ast AstUtils LiftSubst Pretty Checker.
 
-From MetaCoq.Guarded Require Import MCRTree Except util Trace Inductives.
+From MetaCoq.Guarded Require Import MCRTree Inductives.
 
 (** * Guard Checker *)
 
@@ -341,14 +341,6 @@ Definition push_fix_guard_env G (mfix : mfixpoint term) :=
   Lacking restrictions to the information allowed to pass through matches in this way were cause for a soundness bug in 2013.
   See https://sympa.inria.fr/sympa/arc/coq-club/2013-12/msg00119.html.
 *)
-
-(** TODO YJ: what do the parameters mean? *)
-Inductive fix_guard_error :=
-  | NotEnoughAbstractionInFixBody
-  | RecursionNotOnInductiveType : term -> fix_guard_error
-  | RecursionOnIllegalTerm : nat -> (context * term) -> (list nat * list nat) -> fix_guard_error
-  | NotEnoughArgumentsForFixCall : nat -> fix_guard_error
-  | FixpointOnIrrelevantInductive.
 
 Inductive fix_check_result :=
   | NeedReduce (Γ : context) (e : fix_guard_error)
@@ -1160,6 +1152,10 @@ Definition pop_argument Σ ρ needreduce G elt stack (x : aname) (a b : term)
 Definition bruijn_print Σ Γ t :=
   print_term Σ (ctx_names Γ) true t.
 
+Section CheckFix.
+Context (Σ : global_env_ext) (ρ : pathsEnv).
+
+Open Scope nat_scope.
 (** 
   The main checker descending into the recursive structure of a term.
   Checks if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].
@@ -1171,63 +1167,63 @@ Definition bruijn_print Σ Γ t :=
   with (the subterm information of) [u] on the stack. This is needed as we (of course)
   might not be able to reduce the match, but still want to be able to reason
   about [t] being applied to [u] after reduction.
-
+ 
   [trees] is the list of recursive structures for the decreasing arguments of the mutual fixpoints.
   
-  [decreasing_args] is the list of the recursive argument position of every mutual fixpoint. *)
+  [decreasing_args] is the list of the recursive argument position of every mutual fixpoint. 
+  [rs] is the stack of redexes traversed w/o having been triggered *)
 #[bypass_check(guard)]
-Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
-Σ ρ G (stack : list stack_element) (t : term) {struct t} : exc unit := 
-  let check_rec_call' := check_rec_call num_fixes decreasing_args trees Σ ρ in 
+Fixpoint check_rec_call_stack (decreasing_args : list nat) trees
+G (stack : list stack_element) rs (t : term) {struct t} : exc unit := 
+  (* possible optimisation: precompute [num_fixes] *)
+  let num_fixes := #|decreasing_args| in 
+  let check_rec_call_stack' := check_rec_call_stack decreasing_args trees in 
 
   (** if [t] does not make recursive calls, then it is guarded: *)
   (* YJ: checks that no variable in [G.(rel_min_fix), G.(rel_min_fix)+num_fixes[
     is called in [t]. Ie none of fix1, ..., fixk is called in [t] where k = num_fixes *)
   if negb(rel_range_occurs G.(rel_min_fix) num_fixes t) then ret tt
   else 
-    t_whd <- whd_βιζ Σ G.(loc_env) t;;
+    (* t_whd <- whd_βιζ Σ G.(loc_env) t;;
     (* FIXME: the guardedness checker will not be able to determine guardedness of this function since we wrap the match in there; thus l will not be determined as a subterm (as [] isn't) *)
-    let (f, l) := decompose_app t_whd in  
+    let (f, l) := decompose_app t_whd in   *)
     (** NOTE : I have annotated some of the cases with conditions on guardedness, but these are partially incomplete as the [stack] of 'virtually applied' arguments complicates verbal descriptions quite a bit. 
       The commented code is likely more informative. *)
-    match f with 
+    match t with 
+    | tApp f args =>
+        let '(rs', stack') := fold_right (fun arg '(rs, stack) =>
+            let '(needreduce, rs') := check_rec_call G rs arg in
+            let stack' := push_stack_closure G needreduce arg stack in
+            (rs', stack')) (rs, stack) args
+        in check_rec_call_stack' G stack' rs' f
+
     | tRel p =>
         (** check if [p] is a fixpoint (of the block of fixpoints we are currently checking),i.e. we are making a recursive call *)
-        if Nat.leb G.(rel_min_fix) p && Nat.ltb p (G.(rel_min_fix) + num_fixes) then
-          trace ("check_rec_call : tRel :: " ++ print_term Σ (ctx_names G.(loc_env)) true t);;
-          (** check calls in the argument list, initialized to an empty stack*)
-          _ <- list_iter (check_rec_call' G []) l;;
-          trace ("check_rec_call : tRel :: checked arguments");;
-          (** get the position of the invoked fixpoint in the mutual block *) (* YJ : ok *)
-          let rec_fixp_index := G.(rel_min_fix) + num_fixes -1 - p in
-          (** get the decreasing argument of the recursive call. [decreasing_arg : nat] *)
+        if G.(rel_min_fix) <= p && p <= (G.(rel_min_fix) + num_fixes) then
+          let rec_fixp_index := G.(rel_min_fix) + num_fixes - 1 - p in
           decreasing_arg <- except (IndexErr "check_rec_call" "invalid fixpoint index" rec_fixp_index) $ 
             nth_error decreasing_args rec_fixp_index;;
-          (** push the arguments as closures on the stack -- we don't infer their full subterm information yet *)
-          let stack' := push_stack_closures G stack l in 
-          (** get the stack entry for the decreasing argument *)
           z <- except (IndexErr "check_rec_call" "not enough arguments for recursive fix call" decreasing_arg) $ 
-            nth_error stack' decreasing_arg;;
-          (** get the tree for the recursive argument type *)
-          recarg_tree <- except (IndexErr "check_rec_call" "no tree for the recursive argument" rec_fixp_index) $ 
-            nth_error trees rec_fixp_index;;
-          (** YJ: TODO check that stack_element_specif + check_is_subterm is the
-            "z ∈ ν" in paper. Here, [z : stack_element]. *)
-          (** infer the subterm spec of the applied argument *)
-          rec_subterm_spec <- stack_element_specif Σ ρ z;;
-          trace ("check_rec_call : tRel :: spec for decreasing arg is " ++ (print_subterm_spec Σ rec_subterm_spec));;
-          (** verify that it is a subterm *)
-          if negb (check_is_subterm rec_subterm_spec recarg_tree)
-          then 
-            match z with 
-            | SClosure z z' => raise $ GuardErr "check_rec_call" "illegal recursive call (could not ensure that argument is decreasing)"
-            | SArg _ => 
-                (* TODO: check if this is the right error *)
-                raise $ GuardErr "check_rec_call" "fix was partially applied"
-            end
-          else  
-          ret tt
-        else ret tt
+            nth_error stack decreasing_arg;;
+          catchMap z
+            (fun _exc => set_need_reduce_top G.(loc_env) (NotEnoughArgumentsForFixCall decreasing_arg) rs)
+            (fun z => 
+              (** get the tree for the recursive argument type *)
+              recarg_tree <- except
+                (IndexErr "check_rec_call" "no tree for the recursive argument" rec_fixp_index)
+                (nth_error trees rec_fixp_index);;
+              subterm_spec <- check_is_subterm (stack_element_specif z) recarg_tree;;
+              match subterm_spec with
+                | NeedReduceSubterm l => ret $ set_need_reduce G.(loc_env) l (illegal_rec_call G decreasing_arg z) rs
+                | InvalidSubterm => raise (GuardErr "check_rec_call" "recursion on non-subterm")
+              end)
+        else
+          check_rec_call_state G NoNeedReduce stack rs (fun tt =>
+            entry <- except (IndexErr "check_rec_call" "dB index out of range") $ nth_error (pred p) G.(loc_env);;
+            ret match entry.(decl_body) with
+            | None => None
+            | Some t => Some (lift0 p t, [])
+            end)
 
     (** Assume we are checking the fixpoint f. For checking [g a1 ... am] where
     <<
@@ -1428,14 +1424,14 @@ Fixpoint check_rec_call (num_fixes : nat) (decreasing_args : list nat) trees
         (** NOTE: the guard checker is not really supposed to be dealing with evars -- it should be called on evar-free terms;
           see https://github.com/coq/coq/issues/9333#issuecomment-453235650*)
         raise $ OtherErr "check_rec_call" "guard checker should not be called on terms containing evars"
-    | tApp _ _ | tLetIn  _ _ _ _ | tCast _ _ _ => raise (OtherErr "check_rec_call" "beta-zeta-iota reduction is broken")
+    | tLetIn  _ _ _ _ | tCast _ _ _ => raise (OtherErr "check_rec_call" "beta-zeta-iota reduction is broken")
     end
 
 (** Check the body [body] of a nested fixpoint with decreasing argument [decr] (dB index) and subterm spec [sub_spec] for the recursive argument.*)
 (** We recursively enter the body of the fix, adding the non-recursive arguments preceding [decr] to the guard env and finally add the decreasing argument with [sub_spec], before continuing to check the rest of the body *)
 with check_nested_fix_body (num_fixes : nat) (decreasing_args : list nat) trees
-Σ ρ G (decr : nat) (sub_spec : subterm_spec) (body : term) {struct decr}: exc unit := 
-  let check_rec_call' := check_rec_call num_fixes decreasing_args trees Σ ρ in
+G (decr : nat) (sub_spec : subterm_spec) (body : term) {struct decr}: exc unit := 
+  let check_rec_call' := check_rec_call num_fixes decreasing_args trees in
   (** reduce the body *)
   body_whd <- whd_all Σ G.(loc_env) body;;
   match body with 
@@ -1451,7 +1447,18 @@ with check_nested_fix_body (num_fixes : nat) (decreasing_args : list nat) trees
         check_nested_fix_body num_fixes decreasing_args trees Σ ρ G' n sub_spec body
       end
   | _ => raise $ OtherErr "check_nested_fix_body" "illformed inner fix body"
-  end.
+  end
+
+with check_rec_call_state G needreduce_of_head stack rs expand_head :=
+  rs
+
+with check_inert_subterm_rec_call G rs c :=
+  let '(needreduce, rs) := check_rec_call G rs c in
+  check_rec_call_stack G needreduce [] rs (fun _ => None)
+
+with check_rec_call G rs c :=
+  let res := check_rec_call_stack G [] (NoNeedReduce :: rs) c in
+  (hd res, tl res).
 
 (* YJ: just a wrapper to check_rec_call. *)
 (** Check if [def] is a guarded fixpoint body, with arguments up to (and including)
