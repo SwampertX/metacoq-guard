@@ -119,3 +119,6 @@ Definition map_i {A B} (f : nat -> A -> B) (l : list A) : list B :=
     | hd :: tl => aux tl (S i) (f i hd :: acc)
     end
   in aux l 0 [].
+
+Definition fold_left2_i {A X Y} (f : nat -> A -> X -> Y -> A) xs ys a :=
+  fold_left_i (fun j a '(x, y) => f j a x y) (map2 pair xs ys) a.

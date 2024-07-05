@@ -272,7 +272,7 @@ Definition push_context_guard_env G Γ :=
 Definition push_fix_guard_env G (mfix : mfixpoint term) := 
   let n := length mfix in
   {|
-    loc_env := push_assumptions_context (mfix_names mfix, mfix_types mfix) G.(loc_env);
+    loc_env := push_assumptions_context (map dname mfix, map dtype mfix) G.(loc_env);
     rel_min_fix := G.(rel_min_fix) + n;
     guarded_env := Nat.iter n (fun acc => Not_subterm :: acc) G.(guarded_env);
   |}.
@@ -1248,15 +1248,43 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
     then f is guarded with respect to the set of subterms S in [g a1 ... am].
       (YJ: Taken from Eduardo's "Codifying guarded recursions" )
     *)
-    | tCase ind_nparams_relev rtf discriminant branches => 
-        (** match [discriminant]
-              as [rtf.pcontext[0]]
-              in [ind_nparams_relev.ci_ind]
-              return [rtf.preturn]
-            with 
-            | C_i [branches[i].bcontext] -> [branches[i].bbody]
-            end *)
-        let ind := ind_nparams_relev.(ci_ind) in
+    | tCase ci ti discriminant branches => 
+        let '(needreduce_discr, rs) := check_rec_call G rs discriminant in
+        let rs := check_inert_subterm_rec_call G rs ti.(preturn) in
+        (* compute the recarg info for the arguments of each branch *)
+        let rs' := NoNeedReduce::rs in
+        let nr := redex_level rs' in
+        let case_spec :=
+          branches_specif G (set_iota_specif nr (subterm_specif G [] discriminant)) ci in
+        let stack' := filter_stack_domain G.(loc_env) nr ti.(preturn) stack in
+        let rs' :=
+          fold_left_i (fun k rs' br' =>
+              let stack_br := push_stack_args case_spec.(k) stack' in
+              check_rec_call_stack G stack_br rs' br') branches rs' in
+        let '(needreduce_br, rs) := (hd rs', tl rs') in
+        check_rec_call_state G (needreduce_br ||| needreduce_discr) stack rs (fun _ =>
+          (* we try hard to reduce the match away by looking for a
+              constructor in c_0 (we unfold definitions too) *)
+          let discriminant := whd_all G.(loc_env) discriminant in
+          let '(hd, args) := decompose_app discriminant in
+          let '(hd, args) := match hd with
+            | tCoFix _ _ =>
+                decompose_app (whd_all G.(loc_env) (tApp hd args))
+            | _ => (hd, args)
+            end
+          in
+          match hd with
+          (* FIXME *)
+          (* | tConstruct cstr _ _ => Some (apply_branch cstr args ci brs, []) *)
+          | tConstruct _ _ _
+          | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
+          | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ => assert false
+          | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
+          | tProj _ _ | tCast _ _ _ | tEvar _ _ => None
+          end)
+
+
+        (* let ind := .(ci_ind) in
         let nparams := ind_nparams_relev.(ci_npar) in
         catchE (
           (** check the arguments [l] it is applied to, the return-type function and the discriminant *)
@@ -1290,7 +1318,7 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
               check_rec_call_stack' G [] (mkApps (tCase ind_nparams_relev rtf discriminant branches) l)
           | _ => raise err
           end
-        )
+        ) *)
 
     (** Assume we are checking the fixpoint f wrt the set of subterms S. 
        The arguments called on g, [l] = l1 ... lm
@@ -1308,7 +1336,46 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
        then f is guarded with respect to the set of subterms S in (g l1 ... lm). 
        Eduardo 7/9/98 according to Bruno *)
     | tFix mfix_inner fix_ind => 
-        this_fix <- except (OtherErr "check_rec_call" "tFix: malformed fixpoint") $ nth_error mfix_inner fix_ind;;
+      (* | Fix ((recindxs,i),(_,typarray,bodies as recdef) as fix) -> *)
+      f <- catch (IndexErr "check_rec_call_stack" "not enough fixpoints") $ nth_error fix_ind mfix_inner;;
+      let decrArg := f.(rarg) in
+      let nbodies := #|mfix_inner| in
+      let rs' := fold_left (check_inert_subterm_rec_call G) (NoNeedReduce::rs) (map dtype mfix_inner) in
+      let G' := push_fix_guard_env G mfix_inner in
+      let bodies := map dbody mfix_inner in
+      let nuniformparams := find_uniform_parameters (map rarg mfix_inner) #|stack| bodies in
+      let bodies := drop_uniform_parameters nuniformparams bodies in
+      let fix_stack := filter_fix_stack_domain (redex_level rs) decrArg stack nuniformparams in
+      let fix_stack := if List.length stack > decrArg then List.firstn (decrArg+1) fix_stack else fix_stack in
+      let stack_this := lift_stack nbodies fix_stack in
+      let stack_others := lift_stack nbodies (List.firstn nuniformparams fix_stack) in
+      (* Check guard in the expanded fix *)
+      let rs' := fold_left2_i (fun j rs' recindx body =>
+          let fix_stack := if fix_ind == j then stack_this else stack_others in
+          check_nested_fix_body G' (S recindx) fix_stack rs' body) (map rarg mfix_inner) bodies rs' in
+      let '(needreduce_fix, rs) := (hd rs', tl rs') in
+      let non_absorbed_stack := List.skipn nuniformparams stack in
+      check_rec_call_state G needreduce_fix non_absorbed_stack rs (fun _ =>
+        (* we try hard to reduce the fix away by looking for a
+          constructor in [decrArg] (we unfold definitions too) *)
+        if List.length stack <= decrArg then None else
+        match List.nth stack decrArg with
+        | SArg _ => (* A match on the way *) None
+        | SClosure _ _ n recArg =>
+          let c := whd_all G.(loc_env) (lift0 n recArg) in
+          let '(hd, _) := decompose_app c in
+          match hd with
+          (* FIXME *)
+          (* | tConstruct _ _ _ => Some (contract_fix mfix_inner, stack) *)
+          | tConstruct _ _ _
+          | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
+          | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ => assert false
+          | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
+          | tProj _ _ | tCast _ _ _ | tEvar _ _ => None
+          end
+        end)
+
+        (* this_fix <- except (OtherErr "check_rec_call" "tFix: malformed fixpoint") $ nth_error mfix_inner fix_ind;;
         let decreasing_arg := rarg this_fix in 
         trace $ "check_rec_call : tFix :: " ++ (bruijn_print Σ G.(loc_env) t_whd);;
         catchE (
@@ -1347,7 +1414,7 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
                 (* try again with the reduced recursive argument *)
                 check_rec_call' G [] (mkApps (tFix mfix_inner fix_ind) (before ++ rec_arg_term :: after))
             | _ => raise err
-            end
+            end *)
 
     | tConst kname univ => 
         if is_evaluable_const Σ kname then 
@@ -1446,7 +1513,7 @@ G (decr : nat) (sub_spec : subterm_spec) (body : term) {struct decr}: exc unit :
         let G' := push_var_nonrec G (x, ty) in  
         check_nested_fix_body num_fixes decreasing_args trees Σ ρ G' n sub_spec body
       end
-  | _ => raise $ OtherErr "check_nested_fix_body" "illformed inner fix body"
+  | _ => raise $ GuardErr "check_nested_fix_body" "illformed inner fix body" NotEnoughAbstractionInFixBody
   end
 
 with check_rec_call_state G needreduce_of_head stack rs expand_head :=
