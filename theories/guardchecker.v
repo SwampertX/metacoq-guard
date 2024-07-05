@@ -1287,7 +1287,7 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
           match hd with 
           | tConstruct _ _ _ => 
              (*just check the whole thing again with the reduced discriminant *)
-              check_rec_call' G [] (mkApps (tCase ind_nparams_relev rtf discriminant branches) l)
+              check_rec_call_stack' G [] (mkApps (tCase ind_nparams_relev rtf discriminant branches) l)
           | _ => raise err
           end
         )

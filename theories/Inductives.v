@@ -1,4 +1,3 @@
-(* From MetaCoq.Guarded Require Import printers.  *)
 From MetaCoq.Template Require Import Checker. 
 From MetaCoq.Utils Require Import utils.
 From MetaCoq.Common Require Import BasicAst Universes Environment Reflect.
@@ -381,32 +380,171 @@ Definition hnf_prod_apps Σ Γ t l : exc term :=
   List.fold_left (fun acc r => acc <- acc;; hnf_prod_app Σ Γ acc r) l (ret t). 
 
 
-Definition mfix_names (fixp : mfixpoint term) := map dname fixp. 
-Definition mfix_types (fixp : mfixpoint term) := map dtype fixp.
-Definition mfix_bodies (fixp : mfixpoint term) := map dbody fixp.
-
-(** [fold_term_with_binders g f n acc c] folds [f n] on the immediate
+(* [fold_constr_with_binders g f n acc c] folds [f n] on the immediate
    subterms of [c] starting from [acc] and proceeding from left to
-   right according to the usual representation of the constructions.
-   It carries an extra data [n] (typically a lift
+   right according to the usual representation of the constructions as
+   [fold_constr] but it carries an extra data [n] (typically a lift
    index) which is processed by [g] (which typically add 1 to [n]) at
    each binder traversal; it is not recursive *)
-Definition fold_term_with_binders {X Y}(g : X -> X) (f : X -> Y -> term -> Y) (n : X) (acc : Y) (t : term) :=
-  match t with 
-  | tRel _ | tVar _ | tSort _ | tConst _ _ | tInd _ _ | tConstruct _ _ _ => acc 
+
+(* Counterpart: [Constr.fold_constr_with_binders] *)
+Definition fold_term_with_binders {A B : Type} (g : A -> A)
+  (f : A -> B -> term -> B) (n : A) (acc : B) (c : term) :=
+  match c with
+  | (tRel _ | tVar _   | tSort _ | tConst _ _ | tInd _ _
+    | tConstruct _ _ _ | tInt _ | tFloat _) => acc
   | tCast c _ t => f n (f n acc c) t
-  | tProd _ t c => f (g n) (f n acc t) c
-  | tLambda _ t c => f (g n) (f n acc t) c
-  | tLetIn _ b t c => f (g n) (f n (f n acc b) t) c
-  | tApp c l => List.fold_left (f n) l (f n acc c)
-  | tProj _ c => f n acc c
-  | tEvar _ l => List.fold_left (f n) l acc
-  | tCase _ p c bl => List.fold_left (fun acc '(mk_branch _ t) => f n acc t) bl (f n (f n acc p.(preturn)) c)
-  | tFix mfix nb | tCoFix mfix nb => 
-      let n' := Nat.iter (length mfix) g n in (* the length mfix binders for the fixes are introduced *)
-      let types_and_bodies := map2 (fun a b => (a, b)) (mfix_types mfix) (mfix_bodies mfix) in 
-      List.fold_left (fun acc '(type, body) => f n' (f n acc type) body) types_and_bodies acc
-  | tInt _ | tFloat _ | tArray _ _ _ _ => acc (* primitives *)
+  | tProd _na t c => f (g n) (f n acc t) c
+  | tLambda  _na t c => f (g n) (f n acc t) c
+  | tLetIn _na b t c => f (g n) (f n (f n acc b) t) c
+  | tApp c l => fold_left (f n) l (f n acc c)
+  | tProj _p c => f n acc c
+  | tEvar _ l => fold_left (f n) l acc
+  (* | Case (_,_,pms,(p,_),iv,c,bl) -> *)
+  | tCase _ci ti c bl =>
+    let fold_ctx n (acc : B) (nas : list aname) (c : term) : B :=
+      f (Nat.iter (length nas) g n) acc c
+    in
+
+    (* fold in order: ti -> c -> bl *)
+    let acc := (fold_left (f n) ti.(pparams) acc) in
+    let acc := fold_ctx n acc ti.(pcontext) ti.(preturn) in
+    fold_left (fun acc br => fold_ctx n acc br.(bcontext) br.(bbody)) bl (f n acc c)
+  (* | Fix (_,(_,tl,bl)) => *)
+  | tFix fixpt _ | tCoFix fixpt _ =>
+      let tl : list term := map dtype fixpt in
+      let bl : list term := map dbody fixpt in
+      let n' : A := Nat.iter (length tl) g n in
+      let fd : list (term * term) := map2 (fun t b => (t,b)) tl bl in
+      fold_left (fun acc '(t,b) => f n' (f n acc t) b) fd acc
+  | tArray _u t def ty  =>
+    f n (f n (fold_left (f n) t acc) def) ty
+  end.
+
+(* Since the "return predicate" in Coq kernel is of type [list aname * term * wf_path],
+  while MetaCoq does not keep track of [wf_path],
+  the [map_return_predicate] here corresponds to [map_under_context_with_binders], its subfunction.
+  
+  Furthermore, since the first projection [list aname] is only used for its length,
+  we refine the function to immediately take [ctx_len] to work better with [map_predicate].
+*)
+Definition map_return_predicate {A} (g : A -> A) (f : A -> term -> term) (l : A) ctx_len (p : term) : term :=
+  f (Nat.iter ctx_len g l) p.
+
+Definition map_branches_with_binders {A : Type} (g : A -> A)
+  (f : A -> term -> term) (l : A) (bl : list (branch term)) : list (branch term) :=
+  map (fun b => map_branch (map_return_predicate g f l #|b.(bcontext)|) b) bl.
+
+(* [map_with_binders g f n c] maps [f n] on the immediate
+   subterms of [c]; it carries an extra data [n] (typically a lift
+   index) which is processed by [g] (which typically add 1 to [n]) at
+   each binder traversal; it is not recursive and the order with which
+   subterms are processed is not specified *)
+
+Local Infix "==?" := eqb (at level 20).
+
+Definition eqb_branch (br1 br2 : branch term) : bool :=
+  br1.(bcontext) ==? br2.(bcontext) && br1.(bbody) ==? br2.(bbody).
+
+Instance reflect_branch : ReflectEq (branch term).
+Proof.
+  refine {| eqb := eqb_branch |}.
+  intros [nas1 t1]. induction nas1 as [| a1 nas1 IHnas1]; intros [[|a2 nas2] t2].
+  all : unfold eqb_branch; simpl.
+  - destruct (t1 ==? t2) eqn:Eqt.
+    -- apply eqb_eq in Eqt; subst; now constructor.
+    -- constructor. intros contra. inversion contra; subst.
+      rewrite (eqb_refl t2) in Eqt. inversion Eqt.
+  - constructor. intros contra. inversion contra.
+  - constructor. intros contra. inversion contra.
+  - destruct ((a1 :: nas1) ==? (a2 :: nas2)) eqn:Eqnas.
+    all : destruct (t1 ==? t2) eqn:Eqt; simpl; constructor.
+    -- apply eqb_eq in Eqnas. apply eqb_eq in Eqt. now subst.
+    -- apply eqb_eq in Eqnas. rewrite Eqnas.
+      intros contra. inversion contra; subst.
+      rewrite (eqb_refl t2) in Eqt. inversion Eqt.
+    -- apply eqb_eq in Eqt; subst.
+      intros contra. inversion contra; subst.
+      rewrite (eqb_refl) in Eqnas. inversion Eqnas.
+    -- intros contra. inversion contra; subst.
+      rewrite (eqb_refl) in Eqnas. inversion Eqnas.
+Qed.
+
+(* Definition eqb_predicate :=  *)
+
+Instance reflect_predicate : ReflectEq (predicate term).
+Proof.
+  refine {| eqb := eqb_predicate Instance.eqb eqb |}.
+  intros [] [].
+Admitted.
+
+Definition map_with_binders {A B : Type} (g : A -> A)
+  (f : A -> term -> term) (l : A) (c0 : term) : term :=
+  match c0 with
+  | (tRel _ | tVar _   | tSort _ | tConst _ _ | tInd _ _
+    | tConstruct _ _ _ | tInt _ | tFloat _ ) => c0
+
+  | tCast c k t =>
+    let c' := f l c in
+    let t' := f l t in
+    if c' ==? c && t' ==? t then c0
+    else tCast c' k t'
+
+  | tProd na t c =>
+    let t' := f l t in
+    let c' := f (g l) c in
+    if t' ==? t && c' ==? c then c0
+    else tProd na t' c'
+
+  | tLambda na t c =>
+    let t' := f l t in
+    let c' := f (g l) c in
+    if t' ==? t && c' ==? c then c0
+    else tLambda na t' c'
+
+  | tLetIn na b t c =>
+    let b' := f l b in
+    let t' := f l t in
+    let c' := f (g l) c in
+    if b' ==? b && t' ==? t && c' ==? c then c0
+    else tLetIn na b' t' c'
+
+  | tApp c al =>
+    let c' := f l c in
+    let al' := map (f l) al in
+    if c' ==? c && al' ==? al then c0
+    else tApp c' al'
+
+  | tProj p t =>
+    let t' := f l t in
+    if t' == t then c0
+    else tProj p t'
+
+  | tEvar e al =>
+    let al' := map (fun c => f l c) al in
+    if al' == al then c0
+    else tEvar e al'
+  
+  | tCase ci ti c bl =>
+    let ctx_len := #|ti.(pcontext)| in
+    let ti' := map_predicate id (f l) (map_return_predicate g f l ctx_len) ti in
+    let c' := f l c in
+    let bl' := map_branches_with_binders g f l bl in
+    if ti ==? ti' && c' ==? c && bl' ==? bl then c0
+    else tCase ci ti' c' bl'
+
+  | tFix branches idx | tCoFix branches idx =>
+    let l' := Nat.iter #|branches| g l in
+    let branches' := map (map_def (f l) (f l')) branches in
+    if branches == branches' then c0
+    else tFix branches' idx
+
+  | tArray u arr def ty =>
+    let arr' := map (f l) arr in
+    let def' := f l def in
+    let ty' := f l ty in
+    if def' ==? def && arr ==? arr' && ty ==? ty' then c0
+    else tArray u arr' def' ty'
   end.
 
 (** check if a de Bruijn index in range 
