@@ -212,6 +212,7 @@ Definition lookup_env_const Σ kn : option constant_body :=
   end.
 
 (* NOTE: this does not accurately model the intended behaviour as MetaCoq ignores opaqueness *)
+(* Counterpart: [evaluable_constant] *)
 Definition is_evaluable_const Σ kn := 
   match lookup_env_const Σ kn with
   | Some const =>
@@ -223,6 +224,7 @@ Definition is_evaluable_const Σ kn :=
   end.
 
 (* NOTE: same as above -- are we really allowed to reduce this?*)
+(* Counterpart: [constant_value_in] *)
 Definition get_const_value Σ kn : option term := 
   match lookup_env_const Σ kn with
   | Some const => const.(cst_body)

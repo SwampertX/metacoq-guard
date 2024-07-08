@@ -1413,85 +1413,132 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
                 let after := skipn (S decreasing_arg) l in
                 (* try again with the reduced recursive argument *)
                 check_rec_call' G [] (mkApps (tFix mfix_inner fix_ind) (before ++ rec_arg_term :: after))
-            | _ => raise err
+            | _ => raise err          | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
+          | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ => assert false
+          | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
+          | tProj _ _ | tCast _ _ _ | tEvar _ _ => None
+          end
             end *)
 
     | tConst kname univ => 
-        if is_evaluable_const Σ kname then 
-          (** check the arguments *)
-          catchE (list_iter (check_rec_call' G []) l) $ fun e => 
-          (** an error occurred, maybe it goes better if we apply the arguments and reduce the constant? *)
-            val <- except (ProgrammingErr "check_rec_call" "constant lookup failed") $ get_const_value Σ kname;;
-            check_rec_call' G stack (tApp val l)
-        else 
-          (** just check the arguments without fallback *)
-          list_iter (check_rec_call' G []) l
+        check_rec_call_state G NoNeedReduce stack rs (fun tt =>
+          if is_evaluable_const Σ kname then Some (get_const_value G.(loc_env) kname univ, [])
+          else None)
 
     | tLambda x ty body =>
-        (** l is empty or reduction is broken *)
+        let '(needreduce, rs) := check_rec_call G rs ty in
+        match stack with
+        | elt :: stack =>
+            let '(renv, stack, b) := pop_argument needreduce G elt stack x ty body in
+            check_rec_call_stack G stack rs body
+        | [] => check_rec_call_stack (push_var G (redex_level rs) (x, ty)) [] rs body
+        end
+
+        (*(** l is empty or reduction is broken *)
         _ <- assert (l == []) (OtherErr "check_rec_call" "tLambda : reduction is broken");;
         (** check the type *)
-        check_rec_call' G [] ty;;
+        check_rec_call' G [] ty;          | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
+          | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ => assert false
+          | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
+          | tProj _ _ | tCast _ _ _ | tEvar _ _ => None
+          end;
         (** we take the subterm spec at the head of the stack (corresponding to the element which will be applied to this lambda), or No_subterm if the stack is empty *)
         '(spec, stack') <- extract_stack_hd Σ ρ stack;;
         (** and check the body in the updated environment with the spec for this applied element *)
-        check_rec_call' (push_guard_env G (x, ty, spec)) stack' body
-
+        check_rec_call' (push_guard_env G (x, ty, spec)) stack' body*)
 
     | tProd x ty body => 
-        (** the list [l] should be empty, otherwise the term is ill-typed *)
+        let rs := check_inert_subterm_rec_call G rs ty in
+        check_rec_call_stack (push_var G (redex_level rs) (x, ty)) [] rs body
+
+        (*(** the list [l] should be empty, otherwise the term is ill-typed *)
         _ <- assert (l == []) (OtherErr "check_rec_call" "tProd: input term is ill-typed");;
         (*TODO Coq doesn't like the following check *)
         (*_ <- assert (stack == []) "tProd: stack should be empty";;*)
         (** check the type *)
         check_rec_call' G [] ty;;
         (** check the body: x is not a subterm *)
-        check_rec_call' (push_var_nonrec G (x, ty)) [] body
+        check_rec_call' (push_var_nonrec G (x, ty)) [] body*)
 
     | tCoFix mfix_inner fix_ind => 
-        (** check the arguments *)
+        let rs := fold_left (check_inert_subterm_rec_call G) rs (map dtype mfix_inner) in
+        let G' := push_fix_guard_env G mfix_inner in
+        fold_left (fun rs body =>
+            let '(needreduce', rs) := check_rec_call G' rs body in
+            check_rec_call_state G needreduce' stack rs (fun tt => None))
+          (map dbody mfix_inner) rs
+
+        (*(** check the arguments *)
         _ <- list_iter (check_rec_call' G []) l;;
         (** check the types of the mfixes *)
         _ <- list_iter (check_rec_call' G []) (map dtype mfix_inner);;
         (** check the bodies *)
         let G' := push_fix_guard_env G mfix_inner in
-        list_iter (check_rec_call' G' []) (map dbody mfix_inner)
+        list_iter (check_rec_call' G' []) (map dbody mfix_inner)*)
 
-    | tInd _ _ | tConstruct _ _ _ | tInt _ | tFloat _ | tArray _ _ _ _ => (* TODO YJ: move this *)
-        (** just check the arguments *)
-        list_iter (check_rec_call' G []) l
+    | tInd _ _ | tConstruct _ _ _ =>
+      check_rec_call_state G NoNeedReduce stack rs (fun tt => None)
 
     | tProj p c =>
-        catchE (
-          (** check arguments *)
-          _ <- list_iter (check_rec_call' G []) l;;
-          check_rec_call' G [] c)
-        $ fun exn => 
+        let '(needreduce', rs) := check_rec_call G rs c in
+        check_rec_call_state G needreduce' stack rs (fun tt =>
           (* if this fails, try to reduce the projection by looking for a constructor in c *)
           c <- whd_all Σ G.(loc_env) c;;
-          let '(hd, _) := decompose_app c in 
-          match hd with 
+          let '(hd, args) := decompose_app c in 
+          '(hd, args) <- match hd with 
+          | tCoFix cf ind =>
+              (* FIXME *)
+              (* t <- whd_all Σ G.(loc_env) (tApp (contract_cofix cf, args));; *)
+              t <- whd_all Σ G.(loc_env) (tApp (cf, args));;
+              ret $ decompose_app t
+          | _ => ret (hd, args)
+          end;;
+          match hd with
+          | tConstruct _ _ _ =>
+              let i := p.(proj_npars) + p.(proj_arg) in
+              arg <- catch (IndexErr "check_rec_call_stack" "index of of range") $ nth_error i args;;
+              ret $ Some (arg, [])
+          | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
+          | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ => assert false
+          | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
+          | tProj _ _ | tCast _ _ _ | tEvar _ _ => None
+          end
+          (* match hd with 
           | tConstruct _ _ _ => 
               (* FIXME: currently, this handling is quite pointless as MetaCoq does not implement reduction of projections properly. *)
               raise exn
           | _ => raise exn
-          end  
+          end   *)
+        )
 
     | tVar id => 
-        (* FIXME: environments for named variables do not seem to be properly implemented in MetaCoq.
-          However, I think they are only ever used for section variables in Coq, I believe. *)
-        raise (ProgrammingErr "check_rec_call" "handling of named variables is unimplemented")
+        check_rec_call_state G NoNeedReduce stack rs (fun tt =>
+          entry <- except (OtherErr "check_rec_call_stack" "unknown variable") $
+            find (fun ctx_decl => ctx_decl.(decl_name) == id) G.(loc_env);;
+          match entry.(decl_body) with
+          | None => None
+          | Some t => Some (t, [])
+          end)
+    
+    | tLetIn x c t b =>
+        let '(needreduce_c, rs) := check_rec_call G rs c in
+        let '(needreduce_t, rs) := check_rec_call G rs t in
+        match needreduce_of_stack stack ||| needreduce_c ||| needreduce_t with
+        | NoNeedReduce =>
+            (* Stack do not require to beta-reduce; let's look if the body of the let needs *)
+            let spec := subterm_specif G [] c in
+            let stack := lift_stack 1 stack in
+            check_rec_call_stack (push_let G (x,c,t,spec)) stack rs b
+        | NeedReduce _ _ => check_rec_call_stack G stack rs (subst1 c b)
+        end
+    
+    | tCast c _ t => let rs := check_inert_subterm_rec_call G rs t in
+        let rs := check_rec_call_stack G stack rs c in
+        rs
 
-    | tSort _ => 
-        (* a sort shouldn't be applied to anything; guardedness is fine of course *)
-        assert (l == []) $ OtherErr "check_rec_call" "tSort: ill-typed term"
+    | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ => rs
 
-    | tEvar _ _ => 
-        (** the RHS [l] is not checked because it is considered as the evar's context *)
-        (** NOTE: the guard checker is not really supposed to be dealing with evars -- it should be called on evar-free terms;
-          see https://github.com/coq/coq/issues/9333#issuecomment-453235650*)
-        raise $ OtherErr "check_rec_call" "guard checker should not be called on terms containing evars"
-    | tLetIn  _ _ _ _ | tCast _ _ _ => raise (OtherErr "check_rec_call" "beta-zeta-iota reduction is broken")
+    | tEvar _ _ => rs
     end
 
 (** Check the body [body] of a nested fixpoint with decreasing argument [decr] (dB index) and subterm spec [sub_spec] for the recursive argument.*)
