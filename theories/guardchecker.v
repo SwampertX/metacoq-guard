@@ -245,6 +245,10 @@ Definition update_guard_spec G i new_spec :=
     guarded_env := update_list G.(guarded_env) i new_spec 
   |}.
 
+Definition push_var_guard_env G n na ty :=
+  let spec := if Nat.leb 1 n then Internally_bound_subterm (Natset.singleton n) else Not_subterm in
+  push_var G (na, ty, spec).
+
 (** YJ: is it safe to None => Not_subterm since initialization yields
   G.guarded_env := [Subterm Large tree] ?
   - First thought: probably okay since we "split" the fixpoint s.t. recarg
@@ -379,6 +383,7 @@ Fixpoint needreduce_of_stack (stack : list stack_element) : fix_check_result :=
   end. 
 
 Definition redex_level := List.length.
+Arguments redex_level {A} _.
 
 Definition push_stack_closure G needreduce t stack := 
   (SClosure needreduce G 0 t) :: stack.
@@ -1154,8 +1159,8 @@ Definition bruijn_print Σ Γ t :=
 
 Section CheckFix.
 Context (Σ : global_env_ext) (ρ : pathsEnv).
+Context (decreasing_args : list nat) (trees : list wf_paths).
 
-Open Scope nat_scope.
 (** 
   The main checker descending into the recursive structure of a term.
   Checks if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].
@@ -1173,11 +1178,11 @@ Open Scope nat_scope.
   [decreasing_args] is the list of the recursive argument position of every mutual fixpoint. 
   [rs] is the stack of redexes traversed w/o having been triggered *)
 #[bypass_check(guard)]
-Fixpoint check_rec_call_stack (decreasing_args : list nat) trees
-G (stack : list stack_element) rs (t : term) {struct t} : exc unit := 
+Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_check_result) (t : term) {struct t} : exc (list fix_check_result) := 
   (* possible optimisation: precompute [num_fixes] *)
   let num_fixes := #|decreasing_args| in 
-  let check_rec_call_stack' := check_rec_call_stack decreasing_args trees in 
+  let check_rec_call_stack' := check_rec_call_stack in 
+  let check_inert_subterm_rec_call' := check_inert_subterm_rec_call in 
 
   (** if [t] does not make recursive calls, then it is guarded: *)
   (* YJ: checks that no variable in [G.(rel_min_fix), G.(rel_min_fix)+num_fixes[
@@ -1199,32 +1204,32 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
 
     | tRel p =>
         (** check if [p] is a fixpoint (of the block of fixpoints we are currently checking),i.e. we are making a recursive call *)
-        if G.(rel_min_fix) <= p && p <= (G.(rel_min_fix) + num_fixes) then
+        if (Nat.leb G.(rel_min_fix) p) && (Nat.ltb p (G.(rel_min_fix) + num_fixes)) then
           let rec_fixp_index := G.(rel_min_fix) + num_fixes - 1 - p in
           decreasing_arg <- except (IndexErr "check_rec_call" "invalid fixpoint index" rec_fixp_index) $ 
             nth_error decreasing_args rec_fixp_index;;
-          z <- except (IndexErr "check_rec_call" "not enough arguments for recursive fix call" decreasing_arg) $ 
-            nth_error stack decreasing_arg;;
-          catchMap z
-            (fun _exc => set_need_reduce_top G.(loc_env) (NotEnoughArgumentsForFixCall decreasing_arg) rs)
+          let z_exc := except
+            (IndexErr "check_rec_call" "not enough arguments for recursive fix call" decreasing_arg) $ 
+            nth_error stack decreasing_arg
+          in
+          catchMap z_exc
+            (fun _exc => ret $ set_need_reduce_top G.(loc_env) (NotEnoughArgumentsForFixCall decreasing_arg) rs)
             (fun z => 
               (** get the tree for the recursive argument type *)
               recarg_tree <- except
                 (IndexErr "check_rec_call" "no tree for the recursive argument" rec_fixp_index)
                 (nth_error trees rec_fixp_index);;
-              subterm_spec <- check_is_subterm (stack_element_specif z) recarg_tree;;
+              z_tree <- (stack_element_specif Σ ρ z);;
+              subterm_spec <- check_is_subterm z_tree recarg_tree;;
               match subterm_spec with
                 | NeedReduceSubterm l => ret $ set_need_reduce G.(loc_env) l (illegal_rec_call G decreasing_arg z) rs
                 | InvalidSubterm => raise (GuardErr "check_rec_call" "recursion on non-subterm")
               end)
         else
-          check_rec_call_state G NoNeedReduce stack rs (fun tt =>
-            entry <- except (IndexErr "check_rec_call" "dB index out of range") $ nth_error (pred p) G.(loc_env);;
-            ret match entry.(decl_body) with
-            | None => None
-            | Some t => Some (lift0 p t, [])
-            end)
-
+          check_rec_call_state G NoNeedReduce stack rs (fun _ =>
+            entry <- except (IndexErr "check_rec_call" "dB index out of range") $ nth_error G.(loc_env) (pred p);;
+            option_map (fun t => (lift0 p t, [])) entry.(decl_body)
+          )
     (** Assume we are checking the fixpoint f. For checking [g a1 ... am] where
     <<
     g := match [discriminant]
@@ -1249,18 +1254,19 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
       (YJ: Taken from Eduardo's "Codifying guarded recursions" )
     *)
     | tCase ci ti discriminant branches => 
-        let '(needreduce_discr, rs) := check_rec_call G rs discriminant in
-        let rs := check_inert_subterm_rec_call G rs ti.(preturn) in
+        '(needreduce_discr, rs) <- check_rec_call G rs discriminant ;;
+        rs <- check_inert_subterm_rec_call G rs ti.(preturn) ;;
         (* compute the recarg info for the arguments of each branch *)
         let rs' := NoNeedReduce::rs in
         let nr := redex_level rs' in
+        disc_spec <- (subterm_specif Σ ρ G [] discriminant) ;;
         let case_spec :=
-          branches_specif G (set_iota_specif nr (subterm_specif G [] discriminant)) ci in
+          branches_specif Σ G (set_iota_specif nr disc_spec) ci in
         let stack' := filter_stack_domain G.(loc_env) nr ti.(preturn) stack in
         let rs' :=
           fold_left_i (fun k rs' br' =>
               let stack_br := push_stack_args case_spec.(k) stack' in
-              check_rec_call_stack G stack_br rs' br') branches rs' in
+              check_rec_call_stack' G stack_br rs' br') branches rs' in
         let '(needreduce_br, rs) := (hd rs', tl rs') in
         check_rec_call_state G (needreduce_br ||| needreduce_discr) stack rs (fun _ =>
           (* we try hard to reduce the match away by looking for a
@@ -1420,18 +1426,21 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
           end
             end *)
 
-    | tConst kname univ => 
+    | tConst _ _ => ret rs
+    (* | tConst kname univ => 
         check_rec_call_state G NoNeedReduce stack rs (fun tt =>
           if is_evaluable_const Σ kname then Some (get_const_value G.(loc_env) kname univ, [])
-          else None)
+          else None) *)
 
     | tLambda x ty body =>
-        let '(needreduce, rs) := check_rec_call G rs ty in
+        (* let '(needreduce, rs) := check_rec_call G rs ty in *)
+        let res : fix_check_result * (list fix_check_result) := check_rec_call G rs ty in
+        let '(needreduce, rs) := res in
         match stack with
         | elt :: stack =>
-            let '(renv, stack, b) := pop_argument needreduce G elt stack x ty body in
-            check_rec_call_stack G stack rs body
-        | [] => check_rec_call_stack (push_var G (redex_level rs) (x, ty)) [] rs body
+            '(renv, stack, body) <- pop_argument Σ ρ needreduce G elt stack x ty body ;;
+            check_rec_call_stack' G stack rs body
+        | [] => check_rec_call_stack' (push_var_guard_env G (redex_level rs) x ty) [] rs body
         end
 
         (*(** l is empty or reduction is broken *)
@@ -1448,8 +1457,9 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
         check_rec_call' (push_guard_env G (x, ty, spec)) stack' body*)
 
     | tProd x ty body => 
-        let rs := check_inert_subterm_rec_call G rs ty in
-        check_rec_call_stack (push_var G (redex_level rs) (x, ty)) [] rs body
+        rs' <- check_inert_subterm_rec_call' G rs ty ;;
+        ret rs'
+        (* check_rec_call_stack' (push_var G (redex_level rs) (x, ty)) [] rs' body *)
 
         (*(** the list [l] should be empty, otherwise the term is ill-typed *)
         _ <- assert (l == []) (OtherErr "check_rec_call" "tProd: input term is ill-typed");;
@@ -1477,7 +1487,7 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
         list_iter (check_rec_call' G' []) (map dbody mfix_inner)*)
 
     | tInd _ _ | tConstruct _ _ _ =>
-      check_rec_call_state G NoNeedReduce stack rs (fun tt => None)
+      check_rec_call_state G NoNeedReduce stack rs (fun _ => raise NoReductionPossible)
 
     | tProj p c =>
         let '(needreduce', rs) := check_rec_call G rs c in
@@ -1511,7 +1521,9 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
           end   *)
         )
 
-    | tVar id => 
+        | tVar _ => ret rs
+    (* FIXME: do vars work in MC? *)
+    (* | tVar id => 
         check_rec_call_state G NoNeedReduce stack rs (fun tt =>
           entry <- except (OtherErr "check_rec_call_stack" "unknown variable") $
             find (fun ctx_decl => ctx_decl.(decl_name) == id) G.(loc_env);;
@@ -1519,26 +1531,26 @@ G (stack : list stack_element) rs (t : term) {struct t} : exc unit :=
           | None => None
           | Some t => Some (t, [])
           end)
-    
+     *)
     | tLetIn x c t b =>
         let '(needreduce_c, rs) := check_rec_call G rs c in
         let '(needreduce_t, rs) := check_rec_call G rs t in
         match needreduce_of_stack stack ||| needreduce_c ||| needreduce_t with
         | NoNeedReduce =>
             (* Stack do not require to beta-reduce; let's look if the body of the let needs *)
-            let spec := subterm_specif G [] c in
+            spec <- subterm_specif Σ ρ G [] c ;;
             let stack := lift_stack 1 stack in
-            check_rec_call_stack (push_let G (x,c,t,spec)) stack rs b
-        | NeedReduce _ _ => check_rec_call_stack G stack rs (subst1 c b)
+            check_rec_call_stack' (push_let G (x,c,t,spec)) stack rs b
+        | NeedReduce _ _ => check_rec_call_stack' G stack rs (subst10 c b)
         end
     
-    | tCast c _ t => let rs := check_inert_subterm_rec_call G rs t in
-        let rs := check_rec_call_stack G stack rs c in
-        rs
+    | tCast c _ t =>
+        rs <- check_inert_subterm_rec_call' G rs t ;;
+        check_rec_call_stack' G stack rs c
 
-    | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ => rs
+    | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ => ret rs
 
-    | tEvar _ _ => rs
+    | tEvar _ _ => ret rs
     end
 
 (** Check the body [body] of a nested fixpoint with decreasing argument [decr] (dB index) and subterm spec [sub_spec] for the recursive argument.*)
@@ -1563,12 +1575,12 @@ G (decr : nat) (sub_spec : subterm_spec) (body : term) {struct decr}: exc unit :
   | _ => raise $ GuardErr "check_nested_fix_body" "illformed inner fix body" NotEnoughAbstractionInFixBody
   end
 
-with check_rec_call_state G needreduce_of_head stack rs expand_head :=
+with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> exc (term * list stack_element)) :=
   rs
 
-with check_inert_subterm_rec_call G rs c :=
+with check_inert_subterm_rec_call G rs c : exc (list fix_check_result) :=
   let '(needreduce, rs) := check_rec_call G rs c in
-  check_rec_call_stack G needreduce [] rs (fun _ => None)
+  check_rec_call_stack G needreduce [] rs (fun tt => None)
 
 with check_rec_call G rs c :=
   let res := check_rec_call_stack G [] (NoNeedReduce :: rs) c in
