@@ -735,4 +735,3 @@ Definition abstract_params_mind_constrs num_types num_params (constrs : list ter
     (* substitute the recursive occurences of the inductive types by these abstractions *)
 
     map (subst0 make_abs) constrs.
-
