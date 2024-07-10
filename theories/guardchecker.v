@@ -1598,7 +1598,23 @@ with check_nested_fix_body G (decr:nat) stack (rs : list fix_check_result) (body
   end
 
 with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> exc (term * list stack_element)) {struct rs}:=
-  ret rs
+  (* Test if either the head or the stack of a state
+    needs the state to be reduced before continuing checking *)
+  let e := needreduce_of_head ||| needreduce_of_stack stack in
+  match e with
+  | NoNeedReduce => ret rs
+  | NeedReduce _ _ =>
+      (* Expand if possible, otherwise, last chance, propagate need
+        for expansion, in the hope to be eventually erased *)
+      catchMap (expand_head tt)
+        (fun err => match err with
+          | NoReductionPossible =>
+              tail <- except (IndexErr "check_rec_call_state" "" 0) $ tl rs ;;
+              ret $ e :: tail
+          | _ => raise err
+          end)
+        (fun '(c, stack') => check_rec_call_stack G (stack' ++ stack) rs c)
+  end
 
 with check_inert_subterm_rec_call G rs c {struct rs} : exc (list fix_check_result) :=
   '(needreduce, rs) <- check_rec_call G rs c ;;
@@ -1617,8 +1633,16 @@ with check_rec_call G rs c {struct rs} : exc (fix_check_result * list fix_check_
   [trees] is a list of recursive structures for the decreasing arguments of the mutual fixpoints.
   [recpos] is a list with the recursive argument indices of the mutually defined fixpoints.
 *)
-Definition check_one_fix Σ ρ G (recpos : list nat) (trees : list wf_paths) (def : term) : exc unit := 
-  check_rec_call (length recpos) recpos trees Σ ρ G [] def.  
+Definition check_one_fix G (def : term) : exc unit := 
+  '(needreduce, rs) <- check_rec_call G [] def ;;
+  _ <- assert (#|rs| == 0) (OtherErr "check_one_fix" "check_rec_call doesn't clear the redex stack") ;;
+  match needreduce with 
+  | NeedReduce Γ e => raise (GuardErr "check_one_fix" "" e)
+  | NoNeedReduce => ret tt
+  end.
+
+End CheckFix.
+Set Guard Checking.
 
 
 (* YJ: This function "chops" an inductive into the recursive part and the rest.
