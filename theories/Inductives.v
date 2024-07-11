@@ -735,3 +735,19 @@ Definition abstract_params_mind_constrs num_types num_params (constrs : list ter
     (* substitute the recursive occurences of the inductive types by these abstractions *)
 
     map (subst0 make_abs) constrs.
+
+Definition contract_fix (mfix : mfixpoint term) (idx : nat) : exc term :=
+  let nbodies := #|mfix| in
+  let closure : list term := unfold nbodies (tFix mfix) in
+  def <- except (IndexErr "contract_fix" "invalid fixpoint index" idx) $ nth_error mfix idx ;;
+  ret $ subst0 closure def.(dbody).
+
+Definition contract_cofix (mfix : mfixpoint term) (idx : nat) : exc term :=
+  let nbodies := #|mfix| in
+  let closure : list term := unfold nbodies (tFix mfix) in
+  def <- except (IndexErr "contract_cofix" "invalid cofixpoint index" idx) $ nth_error mfix idx ;;
+  ret $ subst0 closure def.(dbody).
+
+(* FIXME *)
+Definition apply_branch (ind:inductive) (idx:nat) (args:list term) (ci:case_info) (branches:list (branch term)) : exc term :=
+ret $ tVar "fixme".

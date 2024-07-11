@@ -1157,17 +1157,6 @@ Definition pop_argument Σ ρ needreduce G elt stack (x : aname) (a b : term)
 Definition bruijn_print Σ Γ t :=
   print_term Σ (ctx_names Γ) true t.
 
-(* FIXME *)
-Definition contract_fix (mfix : mfixpoint term) (idx : nat) : term :=
-  tFix mfix idx.
-
-(* FIXME *)
-Definition contract_cofix (mfix : mfixpoint term) (idx : nat) : term :=
-  tCoFix mfix idx.
-
-(* FIXME *)
-Definition apply_branch (ind:inductive) (idx:nat) (args:list term) (ci:case_info) (branches:list (branch term)) : term :=
-  tVar "FIXME".
 
 Unset Guard Checking. (* who checks the checkers? *)
 Section CheckFix.
@@ -1291,13 +1280,15 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
         let '(hd, args) := decompose_app discriminant in
         '(hd, args) <- match hd with
           | tCoFix cf idx =>
-              hd' <- whd_all Σ G.(loc_env) (tApp (contract_cofix cf idx) args) ;;
+              cf' <- contract_cofix cf idx ;;
+              hd' <- whd_all Σ G.(loc_env) (tApp cf' args) ;;
               ret $ decompose_app hd'
           | _ => ret (hd, args)
           end ;;
-        match hd with
+        match hd return exc (term * list stack_element) with
         | tConstruct ind idx _ =>
-            ret (apply_branch ind idx args ci branches, [])
+            c' <- apply_branch ind idx args ci branches ;;
+            ret (c', [])
         | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
         | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ =>
             raise $ OtherErr "check_rec_call_stack :: tCase" "whd_all is broken"
@@ -1397,7 +1388,8 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
         let '(hd, _) := decompose_app c in
         match hd with
         | tConstruct _ _ _ =>
-            ret (contract_fix mfix_inner fix_ind, stack)
+            f' <- contract_fix mfix_inner fix_ind ;;
+            ret (f', stack)
         | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
         | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ =>
             raise $ OtherErr "check_rec_call_stack :: tCase" "whd_all is broken"
@@ -1526,7 +1518,8 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
         let '(hd, args) := decompose_app c in 
         '(hd, args) <- match hd with 
         | tCoFix cf idx =>
-            t <- whd_all Σ G.(loc_env) (tApp (contract_cofix cf idx) args);;
+            cf' <- contract_cofix cf idx ;;
+            t <- whd_all Σ G.(loc_env) (tApp cf' args);;
             ret $ decompose_app t
         | _ => ret (hd, args)
         end;;
@@ -1658,18 +1651,15 @@ Set Guard Checking.
   that contains the arguments up to (and including) the recursive argument (of course also the fixpoints). *)
 #[bypass_check(guard)]
 Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inductive * list (context * term)):= 
-  trace "inductive_of_mutfix : enter";;
-  (* YJ: fixp is a list of all mutual branches of the (mutual) fixpoint. *)
-  let number_of_fixes := length fixp in
+  let number_of_fixes := #|fixp| in
   (* YJ: which cannot be an empty list. We extract the name, type, and body *)
   assert (number_of_fixes != 0) (OtherErr "inductive_of_mutfix" "ill-formed fix");;
-  let ftypes := mfix_types fixp in
-  let fnames := mfix_names fixp in 
-  let fbodies := mfix_bodies fixp in
-  (** push fixpoints to environment *) (* YJ: local context *)
-  let Γ_fix := push_assumptions_context (fnames, ftypes) Γ in
-  (* YJ: index of recursive argument for each fixpoint branch *)
+  let ftypes := map dtype fixp in
+  let fnames := map dname fixp in 
+  let fbodies := map dbody fixp in
   let nvect := map rarg fixp in 
+  (** push fixpoints to local context *)
+  let Γ_fix := push_assumptions_context (fnames, ftypes) Γ in
 
   (* YJ: this function will be iterated onto each fixpoint of [fixp]. *)
   (** Check the i-th definition [fixdef] of the mutual inductive block where k is the recursive argument, 
@@ -1694,37 +1684,31 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
         match def_whd with 
         | tLambda x t body => 
             assert (negb(rel_range_occurs n number_of_fixes t)) 
-              (GuardErr "inductive_of_mutfix" "bad occurrence of recursive call");;
+              (GuardErr "inductive_of_mutfix" "bad occurrence of recursive call"
+                (RecursionOnIllegalTerm n (Γ, def_whd) ([], [])));;
             let Γ' := Γ ,, (vass x t) in
             if n == k then (** becomes true once we have entered [k] inner lambdas*)
               (** so now the rec arg should be at dB 0 and [t] is the type we are doing recursion over *)
               (** get the inductive type of the fixpoint, ensuring that it is an inductive *)
-              '((ind, _), _) <- catchE (find_inductive Σ Γ t) (fun _ => raise $ GuardErr "inductive_of_mutfix" "recursion not on inductive");;
+              '((ind, _), _) <- catchE (find_inductive Σ Γ t) (fun _ => raise $ GuardErr "inductive_of_mutfix" "recursion not on inductive" (RecursionNotOnInductiveType t));;
               '(mib, _) <- lookup_mind_specif Σ ind;;
               if mib.(ind_finite) != Finite then (* ensure that it is an inductive *)
-                raise $ GuardErr "inductive_of_mutfix" "recursion not on inductive"
+                raise $ GuardErr "inductive_of_mutfix" "recursion not on inductive" (RecursionNotOnInductiveType def)
               else
                 (** now return the inductive, the env after taking the inductive argument and all arguments before it, and the rest of the fix's body *)
                 ret (ind, (Γ', body))
             else check_occur Γ' (S n) body
         | _ => 
             (** not a lambda -> we do not have enough arguments and can't find the recursive one *)
-            raise $ GuardErr "inductive_of_mutfix" "not enough abstractions in fix body" 
+            raise $ GuardErr "inductive_of_mutfix" "not enough abstractions in fix body" NotEnoughAbstractionInFixBody
         end
       in 
       (** check that recursive occurences are nice and extract inductive + fix body *)
       check_occur Γ_fix 0 fixdef
-      (* YJ: lennard commented out relevance checking so it is equivalent to the expression above *)
-      (* res <- check_occur Γ_fix 0 fixdef;; 
-      let '(ind, _) := res in
-      '(_, oib) <- lookup_mind_specif Σ ind;;
-      (*if oib.(ind_relevance) == Irrelevant && *)
-      (* TODO some sprop checking for relevance *)
-      ret res *)
   in 
   (** now iterate this on all the fixpoints of the mutually recursive block *)
   rv <- unwrap $ map2_i find_ind nvect fbodies;;
-  trace "inductive_of_mutfix : leave";;
+  (* trace "inductive_of_mutfix : leave";; *)
   (** return the list of inductives as well as the fixpoint bodies in their context *)
   ret (map fst rv : list inductive, map snd rv : list (context * term)).
 
@@ -1740,7 +1724,7 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
 Definition check_fix Σ (ρ : pathsEnv) Γ (mfix : mfixpoint term) : exc unit := 
   (** check that the recursion is over inductives and get those inductives 
     as well as the bodies of the fixpoints *)
-  trace "enter check_fix";;
+  (* trace "enter check_fix";; *)
   '(minds, rec_defs) <- inductive_of_mutfix Σ Γ mfix;;
   (** get the inductive definitions -- note that the mibs should all be the same*)
   (* YJ: the oib is the fixpoint among mib whose name is "exposed". *)
@@ -1767,6 +1751,6 @@ Definition check_fix Σ (ρ : pathsEnv) Γ (mfix : mfixpoint term) : exc unit :=
     (** initial guard env *)
     let G := init_guard_env fix_env rec_arg rec_tree in
     (** check the one fixpoint *)
-    check_one_fix Σ ρ G rec_args rec_trees fix_body 
+    check_one_fix Σ ρ rec_args rec_trees G fix_body 
     ) fix_bodies;;
   ret tt.
