@@ -17,9 +17,10 @@ Print r_f1_syntax. (* tLambda with a tCase body *)
 Definition a := mk_r 1 2.
 MetaCoq Test Quote (a.(r_f1)).
 
+Unset Guard Checking.
+Section Counter.
 Hypothesis Heq : (False -> False) = True.
 
-Unset Guard Checking.
 Fixpoint contradiction (u : True) : False :=
 contradiction (
 match Heq in (_ = T) return T with
@@ -27,9 +28,9 @@ match Heq in (_ = T) return T with
 end
 ).
 MetaCoq Run (check_fix contradiction).
+End Counter.
+Set Guard Checking.
 
-
-Set Positivity Checking. 
 
 Print Nat.sub.
 Fixpoint div (n m : nat) := 
@@ -100,14 +101,17 @@ to (in de Bruijn style). (this can only be non-zero with nested inductives) The
 index [j] refers to the index of the inductive type in the corresponding block
 of mutual inductives. *)
 
-(* clearly not strictly? positive *)
-Inductive bad1 : Set := bad1C : bad1 -> bad1.
+(* clearly not strictly positive *)
+#[bypass_check(positivity)]
+Inductive bad1 : Set := bad1C : (bad1 -> bad1) -> bad1.
+MetaCoq Run (check_inductive (Some "bad1_tree") bad1).
+Fixpoint f (b : bad1) : False := match b with | bad1C fbad => f (fbad b) end.
+
 (* test mutual *)
 (* Unset Positivity Checking. *)
 Inductive A : Set := A1 : B -> B -> A
 with B : Set := B1 : A -> B
 with C : Set := C1 : C -> C.
-
 MetaCoq Run (check_inductive (Some "B_tree") B).
 Print B_tree.
 
@@ -166,18 +170,25 @@ Print rtree_tree.
 (** There are many more complicated behaviours in relation to matches: *)
 (** - Matches can be subterms if all branches are subterms. 
     However, this is restricted for dependent matches, depending on the return-type function/match predicate.*)
-(* FIXME: should fail? *)
-(* Fail Fixpoint abc (n : nat) := 
+Fail Fixpoint abc (n : nat) := 
   match n with 
   | 0 => 0
   | S n => abc (match n with | 0 => n | S n => S n end)
-  end. *)
+  end.
+
+#[bypass_check(guard)]
+Fixpoint abc_bad (n : nat) := 
+  match n with 
+  | 0 => 0
+  | S n => abc_bad (match n with | 0 => n | S n => S n end)
+  end.
+MetaCoq Run (check_fix abc_bad). 
+
 Fixpoint abc (n : nat) := 
   match n with 
   | 0 => 0
   | S n => abc (match n with | 0 => n | S n' => n end)
   end.
-
 MetaCoq Run (check_fix abc). 
 
 (** - If matches are applied to some arguments, we "virtually" apply those arguments to the branches (technically, the checker maintains a stack of such virtual arguments). 
@@ -190,11 +201,10 @@ MetaCoq Run (check_fix abc).
 *)
 
 (** Notably, the guardedness checker reduces at MANY intermediate points: *)
-Unset Guard Checking.
+#[bypass_check(guard)]
 Fixpoint haha_this_is_ridiculous (n : nat) :=
   let _ := haha_this_is_ridiculous n in 0. 
 MetaCoq Run (check_fix haha_this_is_ridiculous). 
-Set Guard Checking.
 
 (** For more details, we refer to the comments in the implementation. *)
 
@@ -202,8 +212,7 @@ Set Guard Checking.
 (** * Some tests *)
 
 (* to check broken fixpoints *)
-Unset Guard Checking.
-
+#[bypass_check(guard)]
 Definition broken_app  {A : Type} := fix broken_app (l m : list A) {struct l} := 
   match l with
   | [] => m
@@ -212,7 +221,7 @@ Definition broken_app  {A : Type} := fix broken_app (l m : list A) {struct l} :=
 
 (*MetaCoq Run (check_fix broken_app ). *)
 (* NOTE: as we only unfold constants at the very top, we need to remove maximally inserted implicits (as the lead to an implicit app, thus preventing broken_app from being unfolded*)
-MetaCoq Run (check_fix (@broken_app) ). 
+MetaCoq Run (check_fix (@broken_app)). 
 
 
 Fixpoint weird_length {X} (l :list X) {struct l} := 
@@ -226,7 +235,7 @@ Fixpoint weird_length {X} (l :list X) {struct l} :=
   end.
 MetaCoq Run (check_fix (@weird_length)). 
 
-MetaCoq Run (check_fix app ). 
+MetaCoq Run (check_fix app). 
 MetaCoq Run (check_fix rev).
 MetaCoq Run (check_fix (@Nat.div)).
 
@@ -258,9 +267,8 @@ MetaCoq Run (check_fix count_cons_even).
 
 
 (** Rosetrees *)
-Fixpoint sumn (l : list nat) := List.fold_left (fun a b => a + b) l 0. 
+Definition sumn (l : list nat) := List.fold_left (fun a b => a + b) l 0. 
 MetaCoq Run (check_fix sumn). 
-
 
 Fixpoint rtree_size {X} (t : rtree X) := 
   match t with
@@ -269,8 +277,8 @@ Fixpoint rtree_size {X} (t : rtree X) :=
 MetaCoq Run (check_inductive None rtree). 
 MetaCoq Run (check_fix (@rtree_size)). 
 
-Unset Guard Checking.
 (* I feel a little bad about lying to Coq about the structural argument, but whatever *)
+#[bypass_check(guard)]
 Fixpoint rtree_size_broken {X} (t : rtree X) {struct t} := 
   match t with
   | rnode l => sumn (map (fun _ => rtree_size_broken t) l)
@@ -313,6 +321,7 @@ Require Coq.Vectors.Vector.
 
 (** Taken from  https://github.com/coq/coq/issues/4320 *)
 
+Unset Guard Checking.
 Section ilist.
 
 (* Lists of elements whose types depend on an indexing set (CPDT's hlists).
