@@ -5,7 +5,7 @@ From MetaCoq.Template Require Import Ast AstUtils.
 From MetaCoq.Template Require Import LiftSubst Pretty.
 From MetaCoq.Guarded Require Import MCRTree. 
 
-From MetaCoq.Guarded Require Export Except util.
+From MetaCoq.Guarded Require Export util.
 
 (** * Common preliminaries of the positivity and guard checkers *)
 
@@ -17,7 +17,8 @@ Open Scope exc_scope.
 Notation loc := string (only parsing).
 
 (** ** Trace-monad based *)
-(* From MetaCoq.Guarded Require Export Trace.  *)
+From MetaCoq.Guarded Require Export Trace. 
+Export MCMonadNotation.
 
 (** TODO YJ: what do the parameters mean? *)
 Inductive fix_guard_error :=
@@ -38,17 +39,23 @@ Inductive guard_exc :=
   | NoReductionPossible. 
 
 (*max bind steps *)
-(* Definition max_steps := 500. 
+Definition max_steps := 500. 
 Definition catchE := @catchE max_steps. 
 Arguments catchE {_ _}. 
 Definition catchMap := @catchMap max_steps _ TimeoutErr. 
-Arguments catchMap {_ _}.  *)
+Arguments catchMap {_ _}. 
   
-Notation "'exc' A" := (excOn guard_exc A) (at level 100) : exc_scope. 
-Definition unwrap := @exc_unwrap.
+Instance trace_monad : Monad (@TraceM guard_exc).
+apply trace_monad. exact max_steps. exact TimeoutErr.
+Defined.
+
+(* Notation "'exc' A" := (excOn guard_exc A) (at level 100) : exc_scope.  *)
+Notation "'exc' A" := (@TraceM guard_exc A) (at level 100) : exc_scope. 
+(* Definition unwrap := @exc_unwrap. *)
+Definition unwrap := @trc_unwrap.
 Arguments unwrap { _ _ _ _}. 
 
-(* Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr. *)
+Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr.
 
 Notation "a == b" := (eqb a b) (at level 70) : exc_scope. 
 Notation "a != b" := (negb(a==b)) (at level 90) : exc_scope.
@@ -193,7 +200,8 @@ Definition ctx_names Γ : list ident := [].
 
 (** ** Reduction and Environment Handling *)
 Definition whd_all Σ Γ t : exc term := 
-  except (OtherErr "whd_all" ("reduction error or out of fuel " ++ print_term Σ (ctx_names Γ) true t)) $ reduce_stack_term RedFlags.default Σ Γ default_fuel t. 
+  let a := reduce_stack_term RedFlags.default Σ Γ default_fuel t in
+  except (OtherErr "whd_all" ("reduction error or out of fuel " ++ print_term Σ (ctx_names Γ) true t)) a.
 
 (** β, ι, ζ weak-head reduction *)
 Definition whd_βιζ Σ Γ t : exc term := 

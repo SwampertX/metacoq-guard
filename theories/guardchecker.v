@@ -1221,8 +1221,8 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           subterm_spec <- check_is_subterm z_tree recarg_tree;;
           let guard_err : fix_guard_error := illegal_rec_call G decreasing_arg z in
           match subterm_spec with
-            | NeedReduceSubterm l => ret (m := fun A => (A + guard_exc)%type) $ set_need_reduce G.(loc_env) l guard_err rs
-            | InvalidSubterm => raise (X := list fix_check_result) (GuardErr "check_rec_call" "recursion on non-subterm" guard_err)
+            | NeedReduceSubterm l => ret (m := fun x => exc x) (set_need_reduce G.(loc_env) l guard_err rs)
+            | InvalidSubterm => raise (GuardErr "check_rec_call" "recursion on non-subterm" guard_err)
           end
         in
         catchMap z_exc

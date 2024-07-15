@@ -33,12 +33,12 @@ Definition check_inductive_mib (Σ:global_env_ext) (kn : kername) (mib : mutual_
     let Γ := Γ ,,, param_context in
 
     match check_positivity_mind true kn cons_names Σ Γ param_context mib.(ind_finite) cons_types with
-    (* | (_, _, _, inl l) =>  *) (* trace monad *)
-        | inl l =>
+    | (_, _, _, inl l) =>  
+        (* | inl l => *)
         l <- tmEval cbn l;;
         ret (Some l)
-    (* | (_, _, _, inr e) =>  *) (* trace monad *)
-        | inr e =>
+    | (_, _, _, inr e) =>  
+        (* | inr e => *)
         e <- tmEval cbn e;; 
         tmPrint e;; ret None
     end
@@ -52,8 +52,8 @@ Definition check_inductive {A} (def : option ident) (a : A) : TemplateMonad unit
   match t with
   | tInd ind _ => 
       match lookup_mind_specif Σ ind with 
-      (* | (_, _, _, inl (mib, oib)) => *)
-        | inl (mib, oib) =>
+      | (_, _, _, inl (mib, oib)) =>
+        (* | inl (mib, oib) => *)
           l <- check_inductive_mib Σ ind.(inductive_mind) mib;;
           match l with
           | None => ret tt
@@ -108,8 +108,8 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
 
       (* NOTE : uncomment if using trace monad *)
       match (check_fix  (Σ, Monomorphic_ctx) ρ Γ mfix) with
-      (* | (_, trace, inr e) =>  *)
-        | inr e =>
+      | (_, trace, inr e) => 
+        (* | inr e => *)
           (*trace <- tmEval cbn trace;;*)
           e <- tmEval cbn e;;
           (*tmPrint trace;;*)
