@@ -5,7 +5,6 @@ Require Import List String.
 
 (** The usual exception monad based on [sum] with a parameterizable type of exceptions. *)
 
-
 Instance sum_monad {Y}: Monad (fun X => X + Y)%type :=
   {|
     ret := fun T t => inl t;
@@ -26,7 +25,6 @@ Definition raise {X Y : Type} (def : Y) : X + Y := inr def.
 
 Definition excOn (Y : Type) (A : Type) := (A + Y)%type.
 
-Notation "f '$' a" := (f (a)) (at level 99, only parsing).
 Section Except.
   Context {Y : Type}.
   Notation "'exc' A" := (excOn Y A) (at level 100).

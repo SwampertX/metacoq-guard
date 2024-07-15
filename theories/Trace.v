@@ -1,5 +1,5 @@
 From MetaCoq.Utils Require Import MCUtils bytestring.
-From MetaCoq.Guarded Require Import Except.
+From MetaCoq.Guarded Require Import Except util.
 Require Import List.
 
 (** Trace Monad built on top of the exception monad for easier debugging. *)
