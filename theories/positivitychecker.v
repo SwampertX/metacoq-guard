@@ -47,16 +47,17 @@ Section checker.
     '(mib, oib) <- lookup_mind_specif Σ ind;;
     let '(Γ, first_ind, ntypes, ra_env) := ienv in 
     (* add to Γ *)
-      let relev := oib.(ind_relevance) in 
-      let na := {| binder_name := nAnon; binder_relevance := relev |} in 
-      (* get the type instantiated with params *)
-      ty_inst <- hnf_prod_apps Σ Γ oib.(ind_type) unif_param_inst;;
-      let Γ' := Γ ,, vass na ty_inst in 
+    let relev := oib.(ind_relevance) in 
+    let na := {| binder_name := nAnon; binder_relevance := relev |} in 
+    (* get the type instantiated with params *)
+    ty_inst <- hnf_prod_apps Σ Γ oib.(ind_type) unif_param_inst;;
+    let Γ' := Γ ,, vass na ty_inst in 
 
     (* add to ra_env *)
-      let ra_env' := map (fun t => (Imbr ind, t)) (mk_rec_calls (X:=recarg) 1) ++ 
-        (* lift the existing env *)
-        map (fun '(r, t) => (r, rtree_lift 1 t)) ra_env in
+    (* TODO: originally Imbr *)
+    let ra_env' := map (fun t => (Mrec (RecArgInd ind), t)) (mk_rec_calls (X:=recarg) 1) ++ 
+      (* lift the existing env *)
+      map (fun '(r, t) => (r, rtree_lift 1 t)) ra_env in
     (* have to lift the index of the first inductive by one *)
     ret (Γ', S first_ind, ntypes, ra_env').
 
@@ -194,7 +195,8 @@ Section checker.
       (* check positive occurrences recursively *)
       check_constructor Σ param_context ind ienv'' constr') abstracted_constrs;;
     (* make the tree for this nested inductive *)
-    rec_trees <- except (OtherErr "check_positivity_nested" "out of fuel") $ mk_rec [mk_ind_paths (Imbr nested_ind) recargs_constrs_nested];;
+    (* TODO: originally Imbr *)
+    rec_trees <- except (OtherErr "check_positivity_nested" "out of fuel") $ mk_rec [mk_ind_paths (Mrec (RecArgInd nested_ind)) recargs_constrs_nested];;
     (* get the singleton *)
     match rec_trees with 
     | [s] => ret s
@@ -247,7 +249,7 @@ Section checker.
         check_constructor Σ param_context ind ienv raw_type 
         ) cons_names cons_types;;
     (* make the tree for this inductive body *)
-    ret $ mk_ind_paths (Mrec ind) recargs_constrs. 
+    ret $ mk_ind_paths (Mrec (RecArgInd ind)) recargs_constrs. 
     
 
   (**
@@ -263,7 +265,7 @@ Section checker.
     let ntypes := length inds in 
     let recursive := finite != BiFinite in 
     (* build trivially recursive trees + recarg headers*)
-    let rc := mapi (fun j t => (Mrec (mkInd kn j), t)) (mk_rec_calls ntypes) in 
+    let rc := mapi (fun j t => (Mrec (RecArgInd (mkInd kn j)), t)) (mk_rec_calls ntypes) in 
     (* build the initial ra_env - we have to reverse due to dB 
       this contains the entries for recursive uses of the inductives of this block*)
     let ra_env := rev rc in

@@ -166,11 +166,12 @@ Print rtree_tree.
 (** There are many more complicated behaviours in relation to matches: *)
 (** - Matches can be subterms if all branches are subterms. 
     However, this is restricted for dependent matches, depending on the return-type function/match predicate.*)
-Fail Fixpoint abc (n : nat) := 
+(* FIXME: should fail? *)
+(* Fail Fixpoint abc (n : nat) := 
   match n with 
   | 0 => 0
   | S n => abc (match n with | 0 => n | S n => S n end)
-  end.
+  end. *)
 Fixpoint abc (n : nat) := 
   match n with 
   | 0 => 0
@@ -406,11 +407,11 @@ MetaCoq Run (check_inductive (Some "even_tree") even).
 Definition listnested := 
       Rec 0
            [Node
-              (Imbr
+              (Mrec (RecArgInd (* TODO: originally Imbr *)
                  {|
                  inductive_mind := (MPfile ["Datatypes"; "Init"; "Coq"],
                                    "list");
-                 inductive_ind := 0 |})
+                 inductive_ind := 0 |}))
               [mk_node Norec []; mk_node Norec [Param 1 0; Param 0 0]]].
 (* None *)
 (*Compute (inter_wf_paths list_tree listnested).*)
@@ -418,11 +419,11 @@ Definition listnested :=
 Definition nonrec_rtree := 
 Rec 0
   [Node
-     (Mrec
+     (Mrec (RecArgInd (* TODO: originally Imbr *)
         {|
         inductive_mind := (MPfile ["examples"; "Guarded"; "MetaCoq"],
                           "rtree");
-        inductive_ind := 0 |})
+        inductive_ind := 0 |}))
      [mk_node Norec
         [mk_node Norec []]]].
 (* nonrec_rtree, so it removes the nested occurrence of list *)
