@@ -33,10 +33,12 @@ Definition check_inductive_mib (Σ:global_env_ext) (kn : kername) (mib : mutual_
     let Γ := Γ ,,, param_context in
 
     match check_positivity_mind true kn cons_names Σ Γ param_context mib.(ind_finite) cons_types with
-    | (_, _, _, inl l) => 
+    (* | (_, _, _, inl l) =>  *) (* trace monad *)
+        | inl l =>
         l <- tmEval cbn l;;
         ret (Some l)
-    | (_, _, _, inr e) => 
+    (* | (_, _, _, inr e) =>  *) (* trace monad *)
+        | inr e =>
         e <- tmEval cbn e;; 
         tmPrint e;; ret None
     end
@@ -50,7 +52,8 @@ Definition check_inductive {A} (def : option ident) (a : A) : TemplateMonad unit
   match t with
   | tInd ind _ => 
       match lookup_mind_specif Σ ind with 
-      | (_, _, _, inl (mib, oib)) =>
+      (* | (_, _, _, inl (mib, oib)) => *)
+        | inl (mib, oib) =>
           l <- check_inductive_mib Σ ind.(inductive_mind) mib;;
           match l with
           | None => ret tt
@@ -97,7 +100,7 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
   match t with
   | tFix mfix _ => 
       (** we should first recursively check the body of the fix (in case of nested fixpoints!) *)
-      let mfix_ctx := push_assumptions_context (mfix_names mfix, mfix_types mfix) Γ in
+      let mfix_ctx := push_assumptions_context (map dname mfix, map dtype mfix) Γ in
       list_iter (fun b => check_fix_term Σ ρ mfix_ctx b.(dbody)) mfix;;
 
       (*tmPrint Σ*)
@@ -105,7 +108,8 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
 
       (* NOTE : uncomment if using trace monad *)
       match (check_fix  (Σ, Monomorphic_ctx) ρ Γ mfix) with
-      | (_, trace, inr e) => 
+      (* | (_, trace, inr e) =>  *)
+        | inr e =>
           (*trace <- tmEval cbn trace;;*)
           e <- tmEval cbn e;;
           (*tmPrint trace;;*)
