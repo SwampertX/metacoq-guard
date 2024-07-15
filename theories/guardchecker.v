@@ -211,7 +211,7 @@ Definition init_guard_env Γ recarg tree :=
        Rel recarg -> first "proper" (non-recursive) argument,
        Rel (S recarg) -> last fixpoint in this block YJ: look at check_fix
     *)
-    rel_min_fix := 2 + recarg; (** TODO YJ: why the current version is 2 instead of 1? *)
+    rel_min_fix := S recarg;
     guarded_env := [Subterm Natset.empty Large tree] 
     (* YJ : the single element corresponds to the head of [loc_env], ie the recursive argument *)
   |}.
@@ -1121,7 +1121,7 @@ Definition filter_fix_stack_domain (nr decrarg : nat) stack nuniformparams : lis
     | [] => []
     | a :: stack =>
       let '(uniform, nuniformparams') :=
-        if Nat.eqb nuniformparams 0 then (false, 0) else (true, pred nuniformparams) in
+        if Nat.eqb nuniformparams 0 then (false, 0) else (true, nuniformparams) in
       let a :=
         if uniform || Nat.eqb i decrarg then a
         else
@@ -1230,7 +1230,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           g
       else
         check_rec_call_state G NoNeedReduce stack rs (fun _ =>
-          entry <- except (IndexErr "check_rec_call" "dB index out of range" (pred p)) $ nth_error G.(loc_env) (pred p);;
+          entry <- except (IndexErr "check_rec_call" "dB index out of range" p) $ nth_error G.(loc_env) p;;
           except (OtherErr "check_rec_call_stack :: tRel" "found assumption instead of definition") $ option_map (fun t => (lift0 p t, [])) entry.(decl_body)
         )
   (** Assume we are checking the fixpoint f. For checking [g a1 ... am] where
@@ -1581,11 +1581,11 @@ with check_nested_fix_body G (decr:nat) stack (rs : list fix_check_result) (body
           (** push to env as non-recursive variable and continue recursively *)
           rs <- check_inert_subterm_rec_call G rs ty ;;
           '(G', stack', body') <- pop_argument Σ ρ NoNeedReduce G elt stack x ty body ;;
-          check_nested_fix_body G' (pred decr) stack' rs body'
+          check_nested_fix_body G' decr stack' rs body'
       | [] =>
           (** we have arrived at the recursive arg *)
           let G' := push_var_guard_env G (redex_level rs) x ty in
-          check_nested_fix_body G' (pred decr) [] rs body
+          check_nested_fix_body G' decr [] rs body
       end
   | _ => raise $ GuardErr "check_nested_fix_body" "illformed inner fix body" NotEnoughAbstractionInFixBody
   end
@@ -1711,7 +1711,6 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
   (* trace "inductive_of_mutfix : leave";; *)
   (** return the list of inductives as well as the fixpoint bodies in their context *)
   ret (map fst rv : list inductive, map snd rv : list (context * term)).
-
 
 
 (* YJ: check_fix is just mapping check_one_fix over the different branches. (I know, I know) *)
