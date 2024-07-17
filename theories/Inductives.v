@@ -757,7 +757,7 @@ Definition contract_cofix (mfix : mfixpoint term) (idx : nat) : exc term :=
   ret $ subst0 closure def.(dbody).
 
 (* FIXME *)
-Definition apply_branch (ind:inductive) (idx:nat) (args:list term) (ci:case_info) (branches:list (branch term)) : exc term :=
+Definition apply_branch (ind:inductive) (idx:nat) (args:list term) (ci:case_info) (branches:list term) : exc term :=
 ret $ tVar "fixme".
 
 (* as implemented in [inductive.ml] *)

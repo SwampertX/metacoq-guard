@@ -1225,7 +1225,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
     (YJ: Taken from Eduardo's "Codifying guarded recursions" )
   *)
   | tCase ci ti discriminant branches => 
-      let '(p, branches) := expand_case Σ ci ti branches in
+      '(p, branches) <- expand_case Σ ci ti branches ;;
       '(needreduce_discr, rs) <- check_rec_call G rs discriminant ;;
       rs <- check_inert_subterm_rec_call G rs p ;;
       (* compute the recarg info for the arguments of each branch *)
@@ -1239,7 +1239,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           rs' <- rs' ;;
           spec <- except (IndexErr "check_rec_call_stack :: tCase" "not enough specs" k) $ nth_error case_spec k ;;
           let stack_br := push_stack_args spec stack' in
-          check_rec_call_stack G stack_br rs' br') (map bbody branches) (ret rs') ;;
+          check_rec_call_stack G stack_br rs' br') branches (ret rs') ;;
       needreduce_br <- except (IndexErr "check_rec_call_stack :: tCase" "" 0) $ hd rs' ;;
       rs <- except (IndexErr "check_rec_call_stack :: tCase" "" 0) $ tl rs' ;;
       check_rec_call_state G (needreduce_br ||| needreduce_discr) stack rs (fun _ =>
