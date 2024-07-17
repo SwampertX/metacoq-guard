@@ -7,29 +7,9 @@ Import ListNotations.
 From MetaCoq Require Import Common.BasicAst Utils.bytestring.
 From MetaCoq.Guarded Require Import MCRTree Inductives.
 
-
-Set Primitive Projections.
-Record r := mk_r { r_f1 : nat ; r_f2 : nat }.
-MetaCoq Quote Definition r_syntax := Eval compute in r.
-Print r_syntax. (* tInd *)
-MetaCoq Quote Definition r_f1_syntax := Eval compute in r_f1.
-Print r_f1_syntax. (* tLambda with a tCase body *)
-Definition a := mk_r 1 2.
-MetaCoq Test Quote (a.(r_f1)).
-
-Unset Guard Checking.
-Section Counter.
-Hypothesis Heq : (False -> False) = True.
-
-Fixpoint contradiction (u : True) : False :=
-contradiction (
-match Heq in (_ = T) return T with
-| eq_refl => fun f:False => match f with end
-end
-).
-MetaCoq Run (check_fix contradiction).
-End Counter.
-Set Guard Checking.
+#[bypass_check(guard)]
+Fixpoint boom (x: nat) : False := boom (id (pred x + O)).
+MetaCoq Run (check_fix boom).
 
 
 Print Nat.sub.
@@ -57,7 +37,6 @@ MetaCoq Run (check_fix div).
 
 (** Example : lists *)
 MetaCoq Run (check_inductive (Some "list_tree") list). 
-Print list_tree. 
 (** 
 
 Inductive list (X : Type) :=
@@ -106,6 +85,7 @@ of mutual inductives. *)
 Inductive bad1 : Set := bad1C : (bad1 -> bad1) -> bad1.
 MetaCoq Run (check_inductive (Some "bad1_tree") bad1).
 Fixpoint f (b : bad1) : False := match b with | bad1C fbad => f (fbad b) end.
+MetaCoq Run (check_fix f).
 
 (* test mutual *)
 (* Unset Positivity Checking. *)
@@ -113,7 +93,7 @@ Inductive A : Set := A1 : B -> B -> A
 with B : Set := B1 : A -> B
 with C : Set := C1 : C -> C.
 MetaCoq Run (check_inductive (Some "B_tree") B).
-Print B_tree.
+(* Print B_tree. *)
 
 (** Nested inductives need special attention: to correctly handle matches (and subterms) on elements of a nested inductive type we are doing recursion over, the inner inductive type's parameters need to be properly instantiated with the outer inductive type. This is in particular the case for the recursive arguments tree. *)
 (** Example: rose trees *)
@@ -161,7 +141,7 @@ Print B_tree.
     
 *)
 MetaCoq Run (check_inductive (Some "rtree_tree") rtree). 
-Print rtree_tree. 
+(* Print rtree_tree.  *)
 
 
 (** When matching on a (loose) subterm of the recursive argument of a fixpoint, we can look in the recursive tree whether a

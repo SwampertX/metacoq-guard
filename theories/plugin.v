@@ -22,9 +22,9 @@ Definition check_inductive_mib (Σ:global_env_ext) (kn : kername) (mib : mutual_
   | oib :: _ => 
     let '(param_context, _) := decompose_arity oib.(ind_type) mib.(ind_npars) in
 
-    cons_names <- tmEval cbn cons_names;;
-    cons_types <- tmEval cbn cons_types;;
-    param_conext <- tmEval cbn param_context;;
+    cons_names <- tmEval cbv cons_names;;
+    cons_types <- tmEval cbv cons_types;;
+    param_conext <- tmEval cbv param_context;;
 
     (* [Γ] should contain the parameters (at the head) and the inductives (for recursive usage; after the parameters). *)
     (* the first type should be last in the list *)
@@ -35,11 +35,11 @@ Definition check_inductive_mib (Σ:global_env_ext) (kn : kername) (mib : mutual_
     match check_positivity_mind true kn cons_names Σ Γ param_context mib.(ind_finite) cons_types with
     | (_, _, _, inl l) =>  
         (* | inl l => *)
-        l <- tmEval cbn l;;
+        l <- tmEval cbv l;;
         ret (Some l)
     | (_, _, _, inr e) =>  
         (* | inr e => *)
-        e <- tmEval cbn e;; 
+        e <- tmEval cbv e;; 
         tmPrint e;; ret None
     end
   | _ => ret None
@@ -62,9 +62,10 @@ Definition check_inductive {A} (def : option ident) (a : A) : TemplateMonad unit
               match def with
               | None => ret tt
               | Some name =>
-                l <- tmEval cbn l;;
+                l <- tmEval cbv l;;
                 match nth_error l ind.(inductive_ind) with
                 | Some tree =>
+                    tmPrint tree ;;
                     tmDefinitionRed_ false name None tree;;
                     ret tt
                 | None => ret tt
@@ -103,24 +104,28 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
       let mfix_ctx := push_assumptions_context (map dname mfix, map dtype mfix) Γ in
       list_iter (fun b => check_fix_term Σ ρ mfix_ctx b.(dbody)) mfix;;
 
-      (*tmPrint Σ*)
-      (*tmPrint Γ;;*)
+      (* tmPrint Σ;;
+      tmPrint Γ;; *)
 
       (* NOTE : uncomment if using trace monad *)
       match (check_fix  (Σ, Monomorphic_ctx) ρ Γ mfix) with
       | (_, trace, inr e) => 
         (* | inr e => *)
-          (*trace <- tmEval cbn trace;;*)
-          e <- tmEval cbn e;;
-          (*tmPrint trace;;*)
+          trace <- tmEval cbv trace;;
+          e <- tmEval cbv e;;
+          (* tmPrint trace ;; *)
+          _ <- monad_iter tmPrint (List.rev trace) ;;
           tmPrint e
-      | _ => tmPrint "success"
+      | (_, trace, inl tt) => 
+          trace <- tmEval cbv trace;;
+          _ <- monad_iter tmPrint (List.rev trace) ;;
+          tmPrint "success"
       end
 
       (* NOTE : uncomment if using exc monad *)
       (*match (check_fix Σ Γ mfix) with*)
       (*| inr e => *)
-          (*e <- tmEval cbn e;;*)
+          (*e <- tmEval cbv e;;*)
           (*tmPrint e*)
       (*| _ => tmPrint "success"*)
       (*end*)

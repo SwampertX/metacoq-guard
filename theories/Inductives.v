@@ -759,3 +759,25 @@ Definition contract_cofix (mfix : mfixpoint term) (idx : nat) : exc term :=
 (* FIXME *)
 Definition apply_branch (ind:inductive) (idx:nat) (args:list term) (ci:case_info) (branches:list (branch term)) : exc term :=
 ret $ tVar "fixme".
+
+(* as implemented in [inductive.ml] *)
+(* returns the return type and branches in lambda form. *)
+Definition expand_case Σ ci ti branches : exc (term × list term) :=
+  let expand_case_specif mib '(ci, ti, branches) :=
+    let idx := ci.(ci_ind).(inductive_ind) in
+    mip <- except (IndexErr "expand_case_specif" "invalid inductive" idx) $ nth_error mib.(ind_bodies) idx ;;
+    (* Expand the return clause *)
+    let predctx := case_predicate_context ci.(ci_ind) mib mip ti in
+    let ep := it_mkLambda_or_LetIn predctx ti.(preturn) in
+    (* Expand the branches *)
+    let ebranches :=
+      let build_one_branch i cdecl br :=
+        let brctxty := case_branch_type ci.(ci_ind) mib ti ep i cdecl br in
+        it_mkLambda_or_LetIn brctxty.1 brctxty.2
+      in
+      map2_i build_one_branch mip.(ind_ctors) branches
+    in
+    ret (ep, ebranches)
+  in
+  specif <- lookup_mib Σ ci.(ci_ind).(inductive_mind) ;;
+  expand_case_specif specif (ci, ti, branches).
