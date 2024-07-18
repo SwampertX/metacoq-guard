@@ -196,7 +196,7 @@ Implicit Types (kn : kername) (c: term).
 
 Open Scope bs.
 
-Definition ctx_names Γ : list ident := [].
+Definition ctx_names := map (string_of_name ∘ binder_name (A := name) ∘ decl_name (term := term)).
 
 (** ** Reduction and Environment Handling *)
 Definition whd_all Σ Γ t : exc term := 

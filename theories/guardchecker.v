@@ -347,6 +347,13 @@ Inductive fix_check_result :=
   | NeedReduce (Γ : context) (e : fix_guard_error)
   | NoNeedReduce.
 
+Definition print_rs Σ rs :=
+  let print_fcr fcr := match fcr with
+  | NeedReduce Γ e => "Need "^(String.concat " " (fst (PrintTermTree.print_context Σ false [] Γ)))
+  | NoNeedReduce => "NoNeed"
+  end
+  in String.concat "|" (map print_fcr rs).
+
 Inductive stack_element := 
   (* Arguments in the evaluation stack.
     [t] is typed in [G]
@@ -360,10 +367,11 @@ Inductive stack_element :=
 (** Print stack elements *)
 Definition print_stack_element Σ z := 
   match z with 
-  (** TODO *)
-  | SClosure _ G _ t => "SClosure " ++ "G" ++ (print_term Σ (ctx_names G.(loc_env)) true t) (* NOTE omitting G *)
+  | SClosure _ G _ t => "SClosure " ++ (print_term Σ (ctx_names G.(loc_env)) true t) (* NOTE omitting G *)
   | SArg s => "SArg " ++ print_subterm_spec Σ s
   end.
+
+Definition print_stack Σ stack := fold_left (fun y x => print_stack_element Σ x^" "^y) stack "".
 
 Definition fix_check_result_or (x y : fix_check_result) := match x with
   | NeedReduce _ _ => x
@@ -1145,22 +1153,15 @@ Context (decreasing_args : list nat) (trees : list wf_paths).
   [rs] is the stack of redexes traversed w/o having been triggered *)
 Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_check_result) (t : term) {struct t} : exc (list fix_check_result) := 
   (* possible optimisation: precompute [num_fixes] *)
-  trace ("check_rec_call_stack :: "^string_of_term t) ;;
+  trace ("check_rec_call_stack :: "^print_term Σ (ctx_names G.(loc_env)) true t) ;;
+  trace ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
+  trace ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
   let num_fixes := #|decreasing_args| in 
 
-  (** if [t] does not make recursive calls, then it is guarded: *)
-  (* YJ: checks that no variable in [G.(rel_min_fix), G.(rel_min_fix)+num_fixes[
-    is called in [t]. Ie none of fix1, ..., fixk is called in [t] where k = num_fixes *)
-  (* if negb(rel_range_occurs G.(rel_min_fix) num_fixes t) then ret tt
-  else  *)
-  (* t_whd <- whd_βιζ Σ G.(loc_env) t;;
-  (* FIXME: the guardedness checker will not be able to determine guardedness of this function since we wrap the match in there; thus l will not be determined as a subterm (as [] isn't) *)
-  let (f, l) := decompose_app t_whd in   *)
-  (** NOTE : I have annotated some of the cases with conditions on guardedness, but these are partially incomplete as the [stack] of 'virtually applied' arguments complicates verbal descriptions quite a bit. 
-    The commented code is likely more informative. *)
   match t with 
   | tApp f args =>
-      (* trace ("check_rec_call_stack :: tApp :: "^string_of_term t) ;; *)
+      trace "checking tApp" ;;
+      (* trace ("check_rec_call_stack :: tApp :: "^print_term Σ (ctx_names G.(loc_env)) true t) ;; *)
       '(rs', stack') <- fold_right (fun arg rs_stack =>
           '(rs, stack) <- rs_stack ;;
           '(needreduce, rs') <- check_rec_call G rs arg ;;
@@ -1169,7 +1170,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       check_rec_call_stack G stack' rs' f
 
   | tRel p =>
-      (* trace ("check_rec_call_stack :: tRel :: "^string_of_term t) ;; *)
+      (* trace ("check_rec_call_stack :: tRel :: "^print_term Σ (ctx_names G.(loc_env)) true t) ;; *)
       (** check if [p] is a fixpoint (of the block of fixpoints we are currently checking),i.e. we are making a recursive call *)
       if (Nat.leb G.(rel_min_fix) p) && (Nat.ltb p (G.(rel_min_fix) + num_fixes)) then
         let rec_fixp_index := G.(rel_min_fix) + num_fixes - 1 - p in
@@ -1197,7 +1198,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           g
       else
         check_rec_call_state G NoNeedReduce stack rs (fun _ =>
-          let env := fold_left String.append (fst (Pretty.PrintTermTree.print_context Σ true [] G.(loc_env))) "" in
+          let env := fold_left (fun x y => x^" "^y) (fst (Pretty.PrintTermTree.print_context Σ false [] G.(loc_env))) "" in
           entry <- except (IndexErr "check_rec_call" ("dB index out of range"^env)p) $ nth_error G.(loc_env) p;;
           except (OtherErr "check_rec_call_stack :: tRel" "found assumption instead of definition") $ option_map (fun t => (lift0 p t, [])) entry.(decl_body)
         )
@@ -1226,30 +1227,44 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
   *)
   | tCase ci ti discriminant branches => 
       '(p, branches) <- expand_case Σ ci ti branches ;;
+      trace "checking discriminant" ;;
       '(needreduce_discr, rs) <- check_rec_call G rs discriminant ;;
+      trace "done checking discriminant" ;;
+      trace "checking return type " ;;
       rs <- check_inert_subterm_rec_call G rs p ;;
+      trace "done checking return type " ;;
       (* compute the recarg info for the arguments of each branch *)
+      trace "checking branches " ;;
       let rs' := NoNeedReduce::rs in
       let nr := redex_level rs' in
       disc_spec <- (subterm_specif Σ ρ G [] discriminant) ;;
       case_spec <- branches_specif Σ G (set_iota_specif nr disc_spec) ci.(ci_ind);;
+      trace "filter stack" ;;
       stack' <- filter_stack_domain Σ ρ G.(loc_env) nr p stack ;; 
+      trace $ "  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack' ;;
       rs' <- fold_left_i (fun k rs' br' =>
           (* TODO: quadratic *)
           rs' <- rs' ;;
           spec <- except (IndexErr "check_rec_call_stack :: tCase" "not enough specs" k) $ nth_error case_spec k ;;
+          trace $ "checking the "^(string_of_nat k)^"-th branch" ;;
           let stack_br := push_stack_args spec stack' in
           check_rec_call_stack G stack_br rs' br') branches (ret rs') ;;
+      trace "done checking branches" ;;
       needreduce_br <- except (IndexErr "check_rec_call_stack :: tCase" "" 0) $ hd rs' ;;
       rs <- except (IndexErr "check_rec_call_stack :: tCase" "" 0) $ tl rs' ;;
       check_rec_call_state G (needreduce_br ||| needreduce_discr) stack rs (fun _ =>
         (* we try hard to reduce the match away by looking for a
             constructor in c_0 (we unfold definitions too) *)
+        trace "whd_all on discriminant" ;;
+        trace $ print_term Σ (ctx_names G.(loc_env)) true discriminant ;;
         discriminant <- whd_all Σ G.(loc_env) discriminant ;;
+        trace "into" ;;
+        trace $ print_term Σ (ctx_names G.(loc_env)) true discriminant ;;
         let '(hd, args) := decompose_app discriminant in
         '(hd, args) <- match hd with
           | tCoFix cf idx =>
               cf' <- contract_cofix cf idx ;;
+              trace "whd_all on cofix head in tApp" ;;
               hd' <- whd_all Σ G.(loc_env) (tApp cf' args) ;;
               ret $ decompose_app hd'
           | _ => ret (hd, args)
@@ -1308,7 +1323,8 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
     rs' <- fold_left2_i (fun j rs' recindx body =>
         rs' <- rs' ;;
         let fix_stack := if fix_ind == j then stack_this else stack_others in
-        check_nested_fix_body G' (S recindx) fix_stack rs' body)
+        (* FIXME: possible db error *)
+        check_nested_fix_body G' recindx fix_stack rs' body)
       (map rarg mfix_inner) bodies (ret rs') ;;
     needreduce_fix <- except (IndexErr "check_rec_call_stack :: tFix" "" 0) $ hd rs' ;;
     rs <- except (IndexErr "check_rec_call_stack :: tFix" "" 0) $ tl rs' ;;
@@ -1321,7 +1337,11 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       match decr_stack_elem with
       | SArg _ => raise NoReductionPossible (* A match on the way *)
       | SClosure _ _ n recArg =>
+        trace "whd_all on recursive argument" ;;
+        trace $ print_term Σ (ctx_names G.(loc_env)) true (lift0 n recArg) ;;
         c <- whd_all Σ G.(loc_env) (lift0 n recArg) ;;
+        trace "into" ;;
+        trace $ print_term Σ (ctx_names G.(loc_env)) true c ;;
         let '(hd, _) := decompose_app c in
         match hd with
         | tConstruct _ _ _ =>
@@ -1370,6 +1390,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       '(needreduce', rs) <- check_rec_call G rs c ;;
       check_rec_call_state G needreduce' stack rs (fun tt =>
         (* if this fails, try to reduce the projection by looking for a constructor in c *)
+        trace "TODO: whd_all on projection" ;;
         c <- whd_all Σ G.(loc_env) c;;
         let '(hd, args) := decompose_app c in 
         '(hd, args) <- match hd with 
@@ -1427,7 +1448,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
 (** Check the body [body] of a nested fixpoint with decreasing argument [decr] (dB index) and subterm spec [sub_spec] for the recursive argument.*)
 (** We recursively enter the body of the fix, adding the non-recursive arguments preceding [decr] to the guard env and finally add the decreasing argument with [sub_spec], before continuing to check the rest of the body *)
 with check_nested_fix_body G (decr:nat) stack (rs : list fix_check_result) (body:term) {struct decr}: exc (list fix_check_result) := 
-  trace ("check_nested_fix_body :: "^string_of_term body) ;;
+  trace ("check_nested_fix_body :: "^print_term Σ (ctx_names G.(loc_env)) true body) ;;
   if decr == 0 then check_inert_subterm_rec_call G rs body else 
   (** reduce the body *)
   body_whd <- whd_all Σ G.(loc_env) body;;
@@ -1446,7 +1467,6 @@ with check_nested_fix_body G (decr:nat) stack (rs : list fix_check_result) (body
       end
   | _ => raise $ GuardErr "check_nested_fix_body" "illformed inner fix body" NotEnoughAbstractionInFixBody
   end
-
 with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> exc (term * list stack_element)) {struct rs}:=
   (* Test if either the head or the stack of a state
     needs the state to be reduced before continuing checking *)
@@ -1468,12 +1488,12 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
   end
 
 with check_inert_subterm_rec_call G rs c {struct rs} : exc (list fix_check_result) :=
-  trace ("check_inert_subterm_call :: "^string_of_term c) ;;
+  trace ("check_inert_subterm_call :: "^print_term Σ (ctx_names G.(loc_env)) true c) ;;
   '(needreduce, rs) <- check_rec_call G rs c ;;
   check_rec_call_state G needreduce [] rs (fun _ => raise NoReductionPossible)
 
 with check_rec_call G rs c {struct rs} : exc (fix_check_result * list fix_check_result):=
-  trace ("check_rec_call :: "^string_of_term c) ;;
+  trace ("check_rec_call :: "^print_term Σ (ctx_names G.(loc_env)) true c) ;;
   res <- check_rec_call_stack G [] (NoNeedReduce :: rs) c ;;
   head <- except (IndexErr "check_rec_call" "" 0) $ hd res ;;
   tail <- except (IndexErr "check_rec_call" "" 0) $ tl res ;;
