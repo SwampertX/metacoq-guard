@@ -218,8 +218,7 @@ MetaCoq Run (check_fix_ci true (@weird_length)).
 
 MetaCoq Run (check_fix_ci true app). 
 MetaCoq Run (check_fix_ci true rev).
-(* FIXME *)
-Fail MetaCoq Run (check_fix_ci true (@Nat.div)).
+MetaCoq Run (check_fix_ci true (@Nat.div)).
 
 
 
@@ -243,10 +242,8 @@ with count_cons_odd n (o : odd n) : nat :=
   | oddS n e => 1 + count_cons_even n e
   end.
 
-(* FIXME *)
-Fail MetaCoq Run (check_fix_ci true count_cons_odd). 
-(* FIXME *)
-Fail MetaCoq Run (check_fix_ci true count_cons_even). 
+MetaCoq Run (check_fix_ci true count_cons_odd). 
+MetaCoq Run (check_fix_ci true count_cons_even). 
 
 
 
@@ -267,8 +264,7 @@ Fixpoint rtree_size_broken {X} (t : rtree X) {struct t} :=
   match t with
   | rnode l => sumn (map (fun _ => rtree_size_broken t) l)
   end.
-(* FIXME *)
-Fail MetaCoq Run (check_fix_ci true (@rtree_size_broken)). 
+MetaCoq Run (check_fix_ci false (@rtree_size_broken)). 
 
 Fixpoint test (l : list nat) := 
   match l with
@@ -293,8 +289,7 @@ Module wo.
       | inr H => F (S n) (Φ H)
       end.
 
-(* FIXME *)
-Fail MetaCoq Run (check_fix_ci true W').
+MetaCoq Run (check_fix_ci true W').
 End wo.
 
 
@@ -366,7 +361,7 @@ Definition ith_body
 Fixpoint ith {m : nat} {As : Vector.t A m} (il : ilist As) (n : Fin.t m) {struct n} : B (Vector.nth As n) := 
   @ ith_body (@ ith) m As il n.
 
-(* FIXME: broken *)
+(* FIXME: broken (Lennard) (failure of tree intersection) *)
 Fail MetaCoq Run (check_fix_ci true (@ith)).
 
 End ilist.
