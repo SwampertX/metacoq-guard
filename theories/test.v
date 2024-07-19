@@ -6,7 +6,7 @@ Open Scope bs.
 Inductive A := AC (u : unit).
 
 #[bypass_check(guard)]
-Fixpoint f (a : A) : unit := match a with AC u => (id f) a end.
+Fixpoint f (a : A) : unit := match a with AC u => f a end.
 
 (* MetaCoq Run (check_inductive (Some "list_tree") list).  *)
 MetaCoq Run (check_fix f). 

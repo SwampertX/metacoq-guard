@@ -9,7 +9,7 @@ From MetaCoq.Guarded Require Import MCRTree Inductives.
 
 #[bypass_check(guard)]
 Fixpoint boom (x: nat) : False := boom (id (pred x + O)).
-MetaCoq Run (check_fix boom).
+MetaCoq Run (check_fix_ci false boom).
 
 
 Print Nat.sub.
@@ -23,7 +23,7 @@ Compute (div 6 2).
 (** spent a lot of time debugging, but proper debugging is effectively impossible due to slowness *)
 (** might also be because I uncommented some reduction stuff because of slowness? who knows *)
 
-MetaCoq Run (check_fix div). 
+(* MetaCoq Run (check_fix_ci true div).  *)
  
 (** * Some examples + explanations *)
 (** The guardedness checker works by recursively traversing terms and checking recursive guardedness syntactically.
@@ -162,14 +162,15 @@ Fixpoint abc_bad (n : nat) :=
   | 0 => 0
   | S n => abc_bad (match n with | 0 => n | S n => S n end)
   end.
-MetaCoq Run (check_fix abc_bad). 
+MetaCoq Run (check_fix_ci false abc_bad). 
 
 Fixpoint abc (n : nat) := 
   match n with 
   | 0 => 0
   | S n => abc (match n with | 0 => n | S n' => n end)
   end.
-MetaCoq Run (check_fix abc). 
+(* FIXME *)
+Fail MetaCoq Run (check_fix_ci true abc). 
 
 (** - If matches are applied to some arguments, we "virtually" apply those arguments to the branches (technically, the checker maintains a stack of such virtual arguments). 
     
@@ -184,7 +185,7 @@ MetaCoq Run (check_fix abc).
 #[bypass_check(guard)]
 Fixpoint haha_this_is_ridiculous (n : nat) :=
   let _ := haha_this_is_ridiculous n in 0. 
-MetaCoq Run (check_fix haha_this_is_ridiculous). 
+MetaCoq Run (check_fix_ci false haha_this_is_ridiculous). 
 
 (** For more details, we refer to the comments in the implementation. *)
 
@@ -201,7 +202,7 @@ Definition broken_app  {A : Type} := fix broken_app (l m : list A) {struct l} :=
 
 (*MetaCoq Run (check_fix broken_app ). *)
 (* NOTE: as we only unfold constants at the very top, we need to remove maximally inserted implicits (as the lead to an implicit app, thus preventing broken_app from being unfolded*)
-MetaCoq Run (check_fix (@broken_app)). 
+MetaCoq Run (check_fix_ci false (@broken_app)). 
 
 
 Fixpoint weird_length {X} (l :list X) {struct l} := 
@@ -213,11 +214,12 @@ Fixpoint weird_length {X} (l :list X) {struct l} :=
       | cons y l'' => S (S (weird_length l''))
       end
   end.
-MetaCoq Run (check_fix (@weird_length)). 
+MetaCoq Run (check_fix_ci true (@weird_length)). 
 
-MetaCoq Run (check_fix app). 
-MetaCoq Run (check_fix rev).
-MetaCoq Run (check_fix (@Nat.div)).
+MetaCoq Run (check_fix_ci true app). 
+MetaCoq Run (check_fix_ci true rev).
+(* FIXME *)
+Fail MetaCoq Run (check_fix_ci true (@Nat.div)).
 
 
 
@@ -241,21 +243,23 @@ with count_cons_odd n (o : odd n) : nat :=
   | oddS n e => 1 + count_cons_even n e
   end.
 
-MetaCoq Run (check_fix count_cons_odd). 
-MetaCoq Run (check_fix count_cons_even). 
+(* FIXME *)
+Fail MetaCoq Run (check_fix_ci true count_cons_odd). 
+(* FIXME *)
+Fail MetaCoq Run (check_fix_ci true count_cons_even). 
 
 
 
 (** Rosetrees *)
 Definition sumn (l : list nat) := List.fold_left (fun a b => a + b) l 0. 
-MetaCoq Run (check_fix sumn). 
+MetaCoq Run (check_fix_ci true sumn). 
 
 Fixpoint rtree_size {X} (t : rtree X) := 
   match t with
   | rnode l => sumn (map rtree_size l)
   end.
 MetaCoq Run (check_inductive None rtree). 
-MetaCoq Run (check_fix (@rtree_size)). 
+MetaCoq Run (check_fix_ci true (@rtree_size)). 
 
 (* I feel a little bad about lying to Coq about the structural argument, but whatever *)
 #[bypass_check(guard)]
@@ -263,14 +267,15 @@ Fixpoint rtree_size_broken {X} (t : rtree X) {struct t} :=
   match t with
   | rnode l => sumn (map (fun _ => rtree_size_broken t) l)
   end.
-MetaCoq Run (check_fix (@rtree_size_broken)). 
+(* FIXME *)
+Fail MetaCoq Run (check_fix_ci true (@rtree_size_broken)). 
 
 Fixpoint test (l : list nat) := 
   match l with
   | [] => 0
   | n :: l => sumn l +  test l
   end.
-MetaCoq Run (check_fix test). 
+MetaCoq Run (check_fix_ci true test). 
 
 
 
@@ -288,7 +293,8 @@ Module wo.
       | inr H => F (S n) (Φ H)
       end.
 
-  MetaCoq Run (check_fix W').
+(* FIXME *)
+Fail MetaCoq Run (check_fix_ci true W').
 End wo.
 
 
@@ -321,7 +327,7 @@ match l with
 | a :: l => (B a) * (ilist l)
 end.
 
-MetaCoq Run (check_fix (@ilist)).
+MetaCoq Run (check_fix_ci true (@ilist)).
 
 Definition icons (a : A) {n} {l : Vector.t A n} (b : B a) (il : ilist l) : ilist (a :: l) := pair b il.
 
@@ -360,8 +366,8 @@ Definition ith_body
 Fixpoint ith {m : nat} {As : Vector.t A m} (il : ilist As) (n : Fin.t m) {struct n} : B (Vector.nth As n) := 
   @ ith_body (@ ith) m As il n.
 
-(* TODO: broken *)
-MetaCoq Run (check_fix (@ith)).
+(* FIXME: broken *)
+Fail MetaCoq Run (check_fix_ci true (@ith)).
 
 End ilist.
 
@@ -370,7 +376,7 @@ End ilist.
 
 MetaCoq Run (check_inductive None even).
 
-Unset Positivity Checking.
+#[bypass_check(positivity)]
 Inductive nonpos := 
   | nonposC (f : nonpos -> nat) : nonpos. 
 

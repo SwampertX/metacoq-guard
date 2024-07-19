@@ -7,7 +7,6 @@ Open Scope string_scope.
 From MetaCoq.Utils Require Import MCList.
 From MetaCoq.Guarded Require Import MCRTree Inductives guardchecker positivitychecker Except Trace.
 
-
 (* explicit instantiation with TemplateMonad as a definition parametric over the monad causes trouble with universe polymorphism *)
 Definition list_iter {X} (f : X -> TemplateMonad unit) (l : list X) : TemplateMonad unit := 
   List.fold_left (fun (acc : TemplateMonad unit) x => _ <- acc;; f x) l (ret tt).
@@ -93,33 +92,35 @@ Fixpoint compute_paths_env Σ0 Σ : TemplateMonad (list (kername * (list wf_path
   | _ :: Σ' => compute_paths_env Σ0 Σ'
   end.
 
+Set Universe Polymorphism. 
+Polymorphic Definition tmAnd (ma mb : TemplateMonad bool) := tmBind ma (fun a => if a then mb else ma).
+
+Notation "ma m&& mb" := (tmAnd ma mb) (at level 105).
 
 (** recursively traverse term and check fixpoints *)
 (* needed for the const unfolding case for demonstrational purposes *)
-Unset Guard Checking. 
-Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t} := 
+#[bypass_check(guard)]
+Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t} : TemplateMonad bool := 
   match t with
   | tFix mfix _ => 
       (** we should first recursively check the body of the fix (in case of nested fixpoints!) *)
       let mfix_ctx := push_assumptions_context (map dname mfix, map dtype mfix) Γ in
-      list_iter (fun b => check_fix_term Σ ρ mfix_ctx b.(dbody)) mfix;;
-
-      (* tmPrint Σ;;
-      tmPrint Γ;; *)
+      fold_left (fun mbool d => mbool m&& check_fix_term Σ ρ mfix_ctx d.(dbody)) mfix (tmReturn true)
+      m&& 
 
       (* NOTE : uncomment if using trace monad *)
       match (check_fix  (Σ, Monomorphic_ctx) ρ Γ mfix) with
-      | (_, trace, inr e) => 
-        (* | inr e => *)
+      | (_, trace, inr e) => (* not guarded *)
           trace <- tmEval cbv trace;;
           e <- tmEval cbv e;;
-          (* tmPrint trace ;; *)
           _ <- monad_iter tmPrint (List.rev trace) ;;
-          tmPrint e
-      | (_, trace, inl tt) => 
+          tmPrint e ;;
+          tmReturn false
+      | (_, trace, inl tt) => (* guarded *)
           trace <- tmEval cbv trace;;
           _ <- monad_iter tmPrint (List.rev trace) ;;
-          tmPrint "success"
+          tmPrint "success" ;;
+          tmReturn true
       end
 
       (* NOTE : uncomment if using exc monad *)
@@ -131,36 +132,30 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
       (*end*)
 
   | tCoFix mfix idx =>
-      tmPrint "co-fixpoint checking is currently not implemented"
+      tmPrint "co-fixpoint checking is currently not implemented" ;;
+      tmReturn true
   | tLambda na T M => 
-      _ <- check_fix_term Σ ρ Γ T;;
-      _ <- check_fix_term Σ ρ (Γ ,, vass na T) M;;
-      ret tt
+      check_fix_term Σ ρ Γ T m&&
+      check_fix_term Σ ρ (Γ ,, vass na T) M
   | tApp u v => 
-      _ <- check_fix_term Σ ρ Γ u;;
-      _ <- list_iter (check_fix_term Σ ρ Γ) v;;
-      ret tt
+      check_fix_term Σ ρ Γ u m&&
+      fold_left (fun mbool t => mbool m&& check_fix_term Σ ρ Γ t) v (tmReturn true)
   | tProd na A B => 
-      _ <- check_fix_term Σ ρ Γ A;;
-      _ <- check_fix_term Σ ρ (Γ ,, vass na A) B;;
-      ret tt
+      check_fix_term Σ ρ Γ A m&&
+      check_fix_term Σ ρ (Γ ,, vass na A) B
   | tCast C kind t => 
-      _ <- check_fix_term Σ ρ Γ C;;
-      _ <- check_fix_term Σ ρ Γ t;;
-      ret tt
+      check_fix_term Σ ρ Γ C m&&
+      check_fix_term Σ ρ Γ t
   | tLetIn na b t b' => 
-      _ <- check_fix_term Σ ρ Γ b;;
-      _ <- check_fix_term Σ ρ Γ t;;
-      _ <- check_fix_term Σ ρ (Γ ,, vdef na b t) b';;
-      ret tt
+      check_fix_term Σ ρ Γ b m&&
+      check_fix_term Σ ρ Γ t m&&
+      check_fix_term Σ ρ (Γ ,, vdef na b t) b'
   | tCase ind rtf discriminant brs =>
-    _ <- check_fix_term Σ ρ Γ rtf.(preturn );;
-    _ <- check_fix_term Σ ρ Γ discriminant;;
-    _ <- list_iter (fun '(mk_branch _ b) => check_fix_term Σ ρ Γ b) brs;;
-    ret tt
+      check_fix_term Σ ρ Γ rtf.(preturn) m&&
+      check_fix_term Σ ρ Γ discriminant m&&
+      fold_left (fun mbool '(mk_branch _ b) => mbool m&& check_fix_term Σ ρ Γ b) brs (tmReturn true)
   | tProj _ C => 
-      _ <- check_fix_term Σ ρ Γ C;;
-      ret tt
+      check_fix_term Σ ρ Γ C
   | tConst kn u => 
       (* NOTE: this is just done for demonstrational purposes for things we have to extract from the global env. 
       Normally, we would not check things which are already in the global env, as they should already have been checked. *)
@@ -168,34 +163,33 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
       | Some const => 
           match const.(cst_body) with 
           | Some t => check_fix_term Σ ρ Γ t
-          | _ => ret tt
+          | _ => tmReturn true
           end
-      | None => ret tt
+      | None => tmReturn true
       end
-
-
       (* do not unfold nested consts *)
-      (*ret tt *)
-  | _ => ret tt 
+
+  | _ => tmReturn true 
   end.
 
-
-Set Guard Checking.
-
-Definition check_fix {A} (a : A) :=
-  mlet (Σ, t) <- tmQuoteRec a ;;
-  paths_env <- compute_paths_env (Σ, Monomorphic_ctx) Σ.(declarations);;
-  t <- match t with 
+Definition check_fix {A} (a : A) : TemplateMonad bool :=
+  tmBind (tmQuoteRec a) (fun '(Σ, t) =>
+  tmBind (compute_paths_env (Σ, Monomorphic_ctx) Σ.(declarations)) (fun paths_env =>
+  let t := match t with 
        | tConst kn u => 
           match lookup_env_const (Σ, Monomorphic_ctx) kn with 
           | Some const => 
               match const.(cst_body) with 
-              | Some t => ret t
-              | _ => ret t
+              | Some body => body
+              | _ => t
               end
-          | None => ret t
+          | None => t
           end
-        | _ => ret t
-       end;;
-  check_fix_term Σ paths_env [] t.
+        | _ => t
+       end in
+  check_fix_term Σ paths_env [] t)).
 
+(* Fails iff check_fix's result doesn't match b. *)
+Definition check_fix_ci {A} (b : bool) (a : A) : TemplateMonad unit :=
+  res <- check_fix a ;;
+  if (res == b) then tmReturn tt else tmFail "error".
