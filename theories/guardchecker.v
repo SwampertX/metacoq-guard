@@ -1154,6 +1154,7 @@ Context (decreasing_args : list nat) (trees : list wf_paths).
 Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_check_result) (t : term) {struct t} : exc (list fix_check_result) := 
   (* possible optimisation: precompute [num_fixes] *)
   trace ("check_rec_call_stack :: "^print_term Σ (ctx_names G.(loc_env)) true t) ;;
+  trace ("  Γ:"^(String.concat " " (fst (PrintTermTree.print_context Σ false [] G.(loc_env))))) ;;
   trace ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
   trace ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
   let num_fixes := #|decreasing_args| in 
@@ -1161,7 +1162,6 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
   match t with 
   | tApp f args =>
       trace "checking tApp" ;;
-      (* trace ("check_rec_call_stack :: tApp :: "^print_term Σ (ctx_names G.(loc_env)) true t) ;; *)
       '(rs', stack') <- fold_right (fun arg rs_stack =>
           '(rs, stack) <- rs_stack ;;
           '(needreduce, rs') <- check_rec_call G rs arg ;;
@@ -1170,7 +1170,6 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       check_rec_call_stack G stack' rs' f
 
   | tRel p =>
-      (* trace ("check_rec_call_stack :: tRel :: "^print_term Σ (ctx_names G.(loc_env)) true t) ;; *)
       (** check if [p] is a fixpoint (of the block of fixpoints we are currently checking),i.e. we are making a recursive call *)
       if (Nat.leb G.(rel_min_fix) p) && (Nat.ltb p (G.(rel_min_fix) + num_fixes)) then
         let rec_fixp_index := G.(rel_min_fix) + num_fixes - 1 - p in
@@ -1226,7 +1225,9 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
     (YJ: Taken from Eduardo's "Codifying guarded recursions" )
   *)
   | tCase ci ti discriminant branches => 
+      trace "expand branches" ;;
       '(p, branches) <- expand_case Σ ci ti branches ;;
+      list_iteri (fun i br => trace $ "expanded "^(string_of_nat i)^"-th branch: "^(print_term Σ (ctx_names G.(loc_env)) true br)) branches ;;
       trace "checking discriminant" ;;
       '(needreduce_discr, rs) <- check_rec_call G rs discriminant ;;
       trace "done checking discriminant" ;;
@@ -1363,7 +1364,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       let '(needreduce, rs) := res in
       match stack with
       | elt :: stack =>
-          '(renv, stack, body) <- pop_argument Σ ρ needreduce G elt stack x ty body ;;
+          '(G, stack, body) <- pop_argument Σ ρ needreduce G elt stack x ty body ;;
           check_rec_call_stack G stack rs body
       | [] => check_rec_call_stack (push_var_guard_env G (redex_level rs) x ty) [] rs body
       end

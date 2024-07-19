@@ -773,7 +773,7 @@ Definition expand_case Σ ci ti branches : exc (term × list term) :=
     let ebranches :=
       let build_one_branch i cdecl br :=
         let brctxty := case_branch_type ci.(ci_ind) mib ti ep i cdecl br in
-        it_mkLambda_or_LetIn brctxty.1 brctxty.2
+        it_mkLambda_or_LetIn brctxty.1 br.(bbody)
       in
       map2_i build_one_branch mip.(ind_ctors) branches
     in

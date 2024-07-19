@@ -22,7 +22,6 @@ Fixpoint update_list {X} (l : list X) index x :=
 
 Section Except. 
   Context {Y : Type}. 
-  (*Notation "'exc' X" := (excOn Y X) (at level 100). *)
   Context {M : Type -> Type} {M_monad : Monad M}. 
 
   Definition list_iter {X} (f : X -> M unit) (l : list X) : M unit := 
@@ -30,8 +29,6 @@ Section Except.
   Definition list_iteri {X} (f : nat -> X -> M unit) (l : list X) : M unit := 
     _ <- List.fold_left (fun (acc : M nat) x => i <- acc;; _ <- f i x;; ret (S i)) l (ret 0);;
     ret tt.
-
-
 End Except.
 
 Definition hd {X} (l : list X) : option X := 
