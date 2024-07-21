@@ -6,6 +6,7 @@ theories/MCRTree.v
 theories/Except.v
 theories/Trace.v
 theories/util.v
+theories/GuardError.v
 theories/Inductives.v
 theories/guardchecker.v
 theories/positivitychecker.v

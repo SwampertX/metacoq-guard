@@ -1,9 +1,10 @@
 From MetaCoq.Utils Require Export monad_utils.
 From MetaCoq.Utils Require Import MCUtils.
-Export MCMonadNotation.
+Import MCMonadNotation.
 Require Import List String.
 
 (** The usual exception monad based on [sum] with a parameterizable type of exceptions. *)
+(** The "right" is the error, while "left" is the data. *)
 
 Instance sum_monad {Y}: Monad (fun X => X + Y)%type :=
   {|
@@ -15,6 +16,7 @@ Instance sum_monad {Y}: Monad (fun X => X + Y)%type :=
       end
   |}.
 
+(* Definition except {X Y: Type} (x : option X) (def : Y) : X + Y := *)
 Definition except {X Y: Type} (def : Y) (x : option X) : X + Y :=
   match x with
   | Some x => inl x

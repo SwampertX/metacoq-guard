@@ -1,7 +1,6 @@
 (* Utility functions that are term/ast-oblivious.
   term/ast-related utils go to Inductive.v. *)
 From MetaCoq.Utils Require Import utils.
-From MetaCoq.Guarded Require Import Except.
 
 Definition map2_i {A B C} (f : nat -> A -> B -> C) (a : list A) (b : list B) := 
   let map2' := fix rec a b n := 
@@ -21,6 +20,7 @@ Fixpoint update_list {X} (l : list X) index x :=
   end.
 
 Section Except. 
+  Import MCMonadNotation.
   Context {Y : Type}. 
   Context {M : Type -> Type} {M_monad : Monad M}. 
 

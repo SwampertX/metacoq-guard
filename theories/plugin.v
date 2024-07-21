@@ -3,7 +3,6 @@ From MetaCoq.Template Require Import Ast AstUtils All.
 Open Scope string_scope.
 Require Import List String.
 Import ListNotations.
-Open Scope string_scope.
 From MetaCoq.Utils Require Import MCList.
 From MetaCoq.Guarded Require Import MCRTree Inductives guardchecker positivitychecker Except Trace.
 

@@ -4,66 +4,15 @@ From MetaCoq.Common Require Import BasicAst Universes Environment Reflect.
 From MetaCoq.Template Require Import Ast AstUtils.
 From MetaCoq.Template Require Import LiftSubst Pretty.
 From MetaCoq.Guarded Require Import MCRTree. 
-
-From MetaCoq.Guarded Require Export util.
+From MetaCoq.Guarded Require Export util GuardError.
 
 (** * Common preliminaries of the positivity and guard checkers *)
-
-(** Exceptions *)
-(** most of the code runs in a monad for handling errors/exceptions *)
-Declare Scope exc_scope.
-Open Scope exc_scope.
-
-Notation loc := string (only parsing).
-
-(** ** Trace-monad based *)
-From MetaCoq.Guarded Require Export Trace. 
-Export MCMonadNotation.
-
-(** TODO YJ: what do the parameters mean? *)
-Inductive fix_guard_error :=
-  | NotEnoughAbstractionInFixBody
-  | RecursionNotOnInductiveType : term -> fix_guard_error
-  | RecursionOnIllegalTerm : nat -> (context * term) -> (list nat * list nat) -> fix_guard_error
-  | NotEnoughArgumentsForFixCall : nat -> fix_guard_error
-  | FixpointOnIrrelevantInductive.
-
-Inductive guard_exc := 
-  | ProgrammingErr (w : loc) (s : string)
-  | OtherErr (w : loc) (s : string)
-  | EnvErr (w: loc) (kn : kername) (s : string)
-  | IndexErr (w : loc) (s : string) (i : nat)
-  | GuardErr (w : loc) (s : string) (e : fix_guard_error)
-  | PositivityError (w : loc) (s : string)
-  | TimeoutErr
-  | NoReductionPossible. 
-
-(*max bind steps *)
-Definition max_steps := 1000. 
-Definition catchE := @catchE max_steps. 
-Arguments catchE {_ _}. 
-Definition catchMap := @catchMap max_steps _ TimeoutErr. 
-Arguments catchMap {_ _}. 
-  
-Instance trace_monad : Monad (@TraceM guard_exc).
-apply trace_monad. exact max_steps. exact TimeoutErr.
-Defined.
-
-(* Notation "'exc' A" := (excOn guard_exc A) (at level 100) : exc_scope.  *)
-Notation "'exc' A" := (@TraceM guard_exc A) (at level 100) : exc_scope. 
-(* Definition unwrap := @exc_unwrap. *)
-Definition unwrap := @trc_unwrap.
-Arguments unwrap { _ _ _ _}. 
-
-Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr.
 
 Notation "a == b" := (eqb a b) (at level 70) : exc_scope. 
 Notation "a != b" := (negb(a==b)) (at level 90) : exc_scope.
 
 (** As the guardedness checker reduces terms at many places before reducing, the key functions are not structurally recursive. 
-  We therefore disable the guardedness checker for this file. *)
-(* Unset Guard Checking.  *)
-
+  We therefore disable the guardedness checker whenever needed for this file. *)
 
 (** ** Compute uniform parameters *)
 
