@@ -1,27 +1,30 @@
 (* Type of regular trees:
-   - Var denotes tree variables (like de Bruijn indices) ()
-     the first int is the depth of the occurrence (YJ: in nested inductive types),
-     and the second int is the index in the array of trees introduced at that depth
-     (YJ: index in mutual inductive types).
+   - [Var] denotes tree variables that refers/points to other nodes (like de Bruijn indices).
+     the first int is the depth of the occurrence (YJ: number of nesting in nested inductive types),
+     and the second int is the index in the array of trees introduced at that depth (YJ: index in mutual inductive types).
+     Concretely, they are the constructors' arguments that are recursive (eg. [n] in [S n : nat], [l] in [cons a l : list A]).
      ==============================================================================    Warning: Var's indices both start at 0!!!
-   - Node denotes the usual tree node, labelled with X (YJ: exclusively recargs
-      in the current implementation. [children] contains [Var]s, one for each
-      constructor.)
 
-   - Rec(j,v1..vn) introduces an infinite tree. It denotes v(j+1) with
-    parameters 0..n-1 replaced by Rec(0,v1..vn)..Rec(n-1,v1..vn) respectively.
-    (YJ: The root of a tree is always Rec. Mutual branches get Rec0, Rec1, etc.
-    The name of Rec comes from "Recursive Types".
+   - [Node X children] denotes the usual tree node, labelled with X (YJ: X is exclusively recargs in the current implementation.)
+      (YJ: Concretely, Node can represent either
+        - (mutual) inductive types (eg. [nat], [list]), OR
+        - constructors, where [children] are arguments (eg. [S], [O] in nat, [nil] [cons] in list), OR
+        - non-recursive arguments to constructors (eg. there are none in nat. [a] to [cons a l] in list))
 
-    [children] is a list of the mutual inductive types in the block. Say A, B
-    are in the same mutual recursive block, [wf_paths A] will result in
-    [Rec 0 [A, B]] , and [wf_paths B] will result in [Rec 1 [A, B]].
-
-    In other words, if no mutual inductives are allowed, [children] is always
-    a singleton [Node].)
+   - [Rec j [v_0..v_(n-1)]] introduces an infinite tree by being a target of recursion.
+      It denotes the j-th mutual indutive in the block, [v_j]
+      with Var nodes [Var 0 0,            .., Var 0 n-1            ] in the whole tree
+      referring to   [Rec(0,v0..v_(n-1)), .., Rec(n-1,v_0..v_(n-1))] respectively.
+      (YJ: Concretely, Rec nodes are the roots of a tree, starting from [Rec 0 children]. Mutual branches get Rec0, Rec1, etc.
+        An inductive block with [n] mutual branches result in [n] trees rooted on
+        [Rec 0 [v0,..,v_(n-1)], .., Rec (n-1) [v_0,..,v_(n-1)]]
+        where [v_i] is the [Node] representing the i-th mutual inductive type.
+        Say A, B are in the same mutual recursive block,
+        [wf_paths A] will result in [Rec 0 [A, B]], and [wf_paths B] will result in [Rec 1 [A, B]].
+        In other words, if no mutual inductives are allowed, [v1..vn] is always a singleton [Node].)
  *)
 Inductive rtree (X : Type) :=
-  | Var (tree_index : nat) (ind_index : nat)
+  | Var (nesting_level : nat) (mutual_index : nat)
   | Node (l : X) (children : list (list (rtree X)))
   | Rec (index : nat) (children : list (rtree X)).
 
@@ -29,9 +32,9 @@ Arguments Var {_}.
 Arguments Node {_}.
 Arguments Rec {_}.
 
-Require Import List Nat.
+Require Import List PeanoNat.
 Import ListNotations.
-From MetaCoq.Utils Require Import MCUtils monad_utils.
+From MetaCoq.Utils Require Import MCUtils monad_utils MCMSets.
 From MetaCoq.Guarded Require Import util GuardError.
 
 (* TODO: proper exception handling with the except monad *)
@@ -39,12 +42,12 @@ From MetaCoq.Guarded Require Import util GuardError.
 Open Scope bool_scope.
 Open Scope nat_scope.
 
+Module Natset := MSetAVL.Make Nat.
+
 Unset Guard Checking.
 Section trees.
 Context {X : Type}.
 Implicit Types (t : rtree X).
-
-Definition default_tree := Var (X:=X) 0 0. (* bogus tree used as default value*)
 
 (* Building trees *)
 (* array of "references" to mutual inductives of innermostly introduced (by Rec) inductive *)
@@ -86,7 +89,7 @@ Definition subst_rtree sub t := subst_rtree_rec 0 sub t.
 Import MCMonadNotation.
 Open Scope bs.
 (* To avoid looping, we must check that every body introduces a node or a var *)
-Fixpoint expand t : exc (rtree X) :=
+Fixpoint expand (t : rtree X) : exc (rtree X) :=
   match t with
   | Rec j defs =>
       def <- except (IndexErr "MCRTree::expand" "" j) (nth_error defs j) ;;
@@ -94,43 +97,40 @@ Fixpoint expand t : exc (rtree X) :=
   | t => ret t
   end.
 (* loops on some inputs:*)
-(*Fail Timeout 1 Compute(expand (Rec 0 [(Var 0 0)])). *)
+(* Fail Timeout 1 Compute(expand (Rec 0 [(Var 0 0)])). *)
 
 
 (* Given a vector of n bodies, builds the n mutual recursive trees.
-   Recursive calls are made with parameters (0,0) to (0,n-1). We check
-   the bodies actually build something by checking it is not
-   directly one of the parameters of depth 0. Some care is taken to
-   accept definitions like  rec X=Y and Y=f(X,Y) *)
+   Recursive calls are made with parameters (0,0) to (0,n-1).
+   We check that the bodies actually build something by checking it is not directly one of the parameters of depth 0.
+   Some care is taken to accept definitions like rec X=Y and Y=f(X,Y) *)
 (* TODO: well, does it actually check that?? expanding first does not seem to be smart, see example from before *)
 Definition mk_rec defs :=
-  let check := fix rec (histo : set nat) d {struct d} :=
-    match expand d with
+  let check := fix rec (histo : Natset.t) (d : rtree X) {struct d} :=
+    d' <- expand d ;;
+    match d' with
     | Var 0 j =>
-        if set_mem (Nat.eq_dec) j histo
-        then None (* invalid recursive call *)
-        else
-          match nth_error defs j with
-          | Some e => rec (set_add (Nat.eq_dec) j histo) e
-          | None => None (* invalid tree *)
-          end
-    | _ => Some tt
+        def <- except (IndexErr "mk_rec : invalid mutual index" "" j) $ nth_error defs j ;;
+        _ <- assert (Natset.mem j histo) (OtherErr "mk_rec : shouldn't be in history" (string_of_nat j)) ;;
+        rec (Natset.add j histo) def
+    | _ => ret tt
     end
   in
-    if existsb is_none (mapi (fun i d => check (set_add (Nat.eq_dec) i (empty_set _)) d) defs)
-    then None
-    else Some (mapi (fun i d => Rec i defs) defs).
+    _ <- list_iteri (fun i => check (Natset.singleton i)) defs ;;
+    ret (mapi (fun i d => Rec i defs) defs).
 
 (* Tree destructors, expanding loops when necessary *)
-Definition destruct_param {Y} t (f : nat -> nat -> Y) y :=
-  match expand t with
-  | Var i j => f i j
-  | _ => y
+Definition destruct_var t :=
+  t' <- expand t ;;
+  match t' with
+  | Var i j => ret (i, j)
+  | _ => raise (OtherErr "destruct_var : not a var" "")
   end.
-Definition destruct_node {Y} t (f : X -> list (rtree X) -> Y) y :=
-  match expand t with
-  | Node l children => f l children
-  | _ => y
+Definition destruct_node t :=
+  t' <- expand t ;;
+  ret match t' with
+  | Node l children => ret (l, children)
+  | _ => raise (OtherErr "destruct_node : not a node" "")
   end.
 (** Get the recarg the root node of [t] is annotated with. *)
 Definition destruct_recarg t : option X :=
