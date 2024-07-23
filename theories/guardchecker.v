@@ -124,7 +124,7 @@ Definition print_subterm_spec Σ (s : subterm_spec) :=
   | Subterm l s paths => "Subterm " ++ print_size s ++ " (" ++ print_wf_paths Σ paths ++ ")"
   | Dead_code => "Dead_code"
   | Not_subterm => "Not_subterm"
-  | Internally_bound_subterm l => ""
+  | Internally_bound_subterm l => "IB"
   end.
 
 
@@ -820,10 +820,16 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
       (** push l to the stack *)
       let stack' := push_stack_closures G stack l in
       (** get subterm info for the discriminant *)
+      trace "specifying discriminant" ;;
       discriminant_spec <- subterm_specif Σ ρ G [] discriminant;;
+      trace $ print_subterm_spec Σ discriminant_spec ;;
       (** get subterm info for the binders in the constructor branches of the discriminant.
         use [branches_binder_specif] for the original, (arguably) equivalent implementation *)
       branches_binders_specs <- branches_specif Σ G discriminant_spec ind;;
+      (* let list_debug : list (list string):= map (map (print_subterm_spec Σ)) branches_binders_specs in
+      let list_debug' list string := map (A:=list string) (String.concat "\n") list_debug in
+      let debug := String.concat "\n" list_debug' in
+      trace debug ;; *)
       (** determine subterm info for the full branches *)
       branches_specs <- unwrap $ mapi (fun i branch => 
         binder_specs <- except (IndexErr "subterm_specif" "branches_binders_specif result is too short" i) $ 
@@ -1171,25 +1177,26 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
 
   | tRel p =>
       (** check if [p] is a fixpoint (of the block of fixpoints we are currently checking),i.e. we are making a recursive call *)
+      trace "we are in trel" ;;
       if (Nat.leb G.(rel_min_fix) p) && (Nat.ltb p (G.(rel_min_fix) + num_fixes)) then
         let rec_fixp_index := G.(rel_min_fix) + num_fixes - 1 - p in
-        decreasing_arg <- except (IndexErr "check_rec_call" "invalid fixpoint index" rec_fixp_index) $ 
+        decreasing_arg <- except (IndexErr "check_rec_call_state" "invalid fixpoint index" rec_fixp_index) $ 
           nth_error decreasing_args rec_fixp_index;;
         let z_exc := except
-          (IndexErr "check_rec_call" "not enough arguments for recursive fix call" decreasing_arg) $ 
+          (IndexErr "check_rec_call_state" "not enough arguments for recursive fix call" decreasing_arg) $ 
           nth_error stack decreasing_arg
         in
         let g (z : stack_element) : exc (list fix_check_result) :=
           (** get the tree for the recursive argument type *)
           recarg_tree <- except
-            (IndexErr "check_rec_call" "no tree for the recursive argument" rec_fixp_index)
+            (IndexErr "check_rec_call_state" "no tree for the recursive argument" rec_fixp_index)
             (nth_error trees rec_fixp_index);;
           z_tree <- stack_element_specif Σ ρ z;;
           subterm_spec <- check_is_subterm z_tree recarg_tree;;
           let guard_err : fix_guard_error := illegal_rec_call G decreasing_arg z in
           match subterm_spec with
             | NeedReduceSubterm l => ret (m := fun x => exc x) (set_need_reduce G.(loc_env) l guard_err rs)
-            | InvalidSubterm => raise (GuardErr "check_rec_call" "recursiase((test.A,0,0,Relevant),((),[],(a),Ind(Coq.Init.Datatypes.unit,0,[])),Rel(0),[([u], Case((Coq.Init.Datatypes.unit,0,0,Relevant),((),[],(u),Ind(Coq.Init.Datatypes.unit,0,[])),Rel(0),[([], App(Rel(2),[App(Construct(test.A,0,0,[]),[Construct(Coq.Init.Datatypes.unit,0,0,[])])]))]))])on on non-subterm" guard_err)
+            | InvalidSubterm => raise (GuardErr "check_rec_call_state" "invalid subterm" guard_err)
           end
         in
         catchMap z_exc
@@ -1253,7 +1260,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       trace "done checking branches" ;;
       needreduce_br <- except (IndexErr "check_rec_call_stack :: tCase" "" 0) $ hd rs' ;;
       rs <- except (IndexErr "check_rec_call_stack :: tCase" "" 0) $ tl rs' ;;
-      check_rec_call_state G (needreduce_br ||| needreduce_discr) stack rs (fun _ =>
+      res <- check_rec_call_state G (needreduce_br ||| needreduce_discr) stack rs (fun _ =>
         (* we try hard to reduce the match away by looking for a
             constructor in c_0 (we unfold definitions too) *)
         trace "whd_all on discriminant" ;;
@@ -1272,7 +1279,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           end ;;
         match hd return exc (term * list stack_element) with
         | tConstruct ind idx _ =>
-            c' <- apply_branch ind idx args ci branches ;;
+            c' <- apply_branch Σ G.(loc_env) ind idx args ci branches ;;
             ret (c', [])
         | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
         | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ =>
@@ -1280,7 +1287,9 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
         | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
         | tProj _ _ | tCast _ _ _ | tEvar _ _ =>
             raise NoReductionPossible
-        end)
+        end) ;;
+        trace "done checking case" ;;
+        ret res
 
 
   (** Assume we are checking the fixpoint f wrt the set of subterms S.ft_i (fun k rs' br' =>

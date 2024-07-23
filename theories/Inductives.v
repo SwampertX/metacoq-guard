@@ -756,9 +756,26 @@ Definition contract_cofix (mfix : mfixpoint term) (idx : nat) : exc term :=
   def <- except (IndexErr "contract_cofix" "invalid cofixpoint index" idx) $ nth_error mfix idx ;;
   ret $ subst0 closure def.(dbody).
 
-(* FIXME *)
-Definition apply_branch (ind:inductive) (idx:nat) (args:list term) (ci:case_info) (branches:list term) : exc term :=
-ret $ tVar "fixme".
+Definition subst_of_rel_context_instance_list sign l :=
+  let fix aux subst sign l :=
+    match sign, l with
+    | {| decl_body := None |} :: sign', a::args' => aux (a::subst) sign' args'
+    | {| decl_body := Some c |} ::sign', args' => aux (subst0 subst c :: subst) sign' args'
+    | [], [] => ret subst
+    | _, _ => raise (OtherErr "subst_of_rel_context_instance_list" "Instance and signature do not match.")
+    end
+  in aux [] (List.rev sign) l.
+
+Definition apply_branch Σ Γ (ind:inductive) (idx:nat) (args:list term) (ci:case_info) (branches:list term) : exc term :=
+  let args := List.skipn ci.(ci_npar) args in
+  br <- except (IndexErr "apply_branch" "idx out of bounds" idx) $ nth_error branches idx ;;
+  mib <- lookup_mib Σ ci.(ci_ind).(inductive_mind) ;;
+  mip <- except (IndexErr "apply_branch" "invalid inductive" idx) $ nth_error mib.(ind_bodies) ind.(inductive_ind) ;;
+  cstr_body <- except (IndexErr "apply_branch" "invalid constructor" idx) $ nth_error mip.(ind_ctors) idx ;;
+  let ci_cstr_ndecls := #|cstr_body.(cstr_args)| in
+  '(ctx, br') <- decompose_lam_n_assum Σ Γ ci_cstr_ndecls br ;;
+  subst <- subst_of_rel_context_instance_list Γ args ;;
+  ret $ subst0 subst br'.
 
 (* as implemented in [inductive.ml] *)
 (* returns the return type and branches in lambda form. *)
