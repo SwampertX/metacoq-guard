@@ -304,7 +304,7 @@ Require Coq.Vectors.Vector.
 
 (** Taken from  https://github.com/coq/coq/issues/4320 *)
 
-Set Guard Checking.
+Unset Guard Checking.
 Section ilist.
 
 (* Lists of elements whose types depend on an indexing set (CPDT's hlists).

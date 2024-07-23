@@ -39,14 +39,14 @@ Inductive guard_exc :=
   | NoReductionPossible. 
 
 (*max bind steps *)
-Definition max_steps := 3000. 
+Definition max_steps := 0. 
 Definition catchE := @catchE max_steps. 
 Arguments catchE {_ _}. 
 Definition catchMap := @catchMap max_steps _ TimeoutErr. 
 Arguments catchMap {_ _}. 
   
 Instance trace_monad : Monad (@TraceM guard_exc).
-apply trace_monad. exact max_steps. exact TimeoutErr.
+apply trace_monad. exact TimeoutErr.
 Defined.
 
 (* Notation "'exc' A" := (excOn guard_exc A) (at level 100) : exc_scope.  *)
@@ -55,7 +55,7 @@ Notation "'exc' A" := (@TraceM guard_exc A) (at level 100) : exc_scope.
 Definition unwrap := @trc_unwrap.
 Arguments unwrap { _ _ _ _}. 
 
-Instance: TrcUnwrap list := list_trc_unwrap max_steps TimeoutErr.
+Instance: TrcUnwrap list := list_trc_unwrap TimeoutErr.
 
 Notation "a == b" := (eqb a b) (at level 70) : exc_scope. 
 Notation "a != b" := (negb(a==b)) (at level 90) : exc_scope.

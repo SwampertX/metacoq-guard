@@ -32,9 +32,12 @@ Section trace.
             | inl e =>
                 match f e with
                 | (b', s', t', e') =>
-                    let s'' := 1 + s' + s in
+                    (* let s'' := 1 + s' + s in
                     if (orb b (Nat.leb max_steps s'')) then (true, s'', t' ++ t, raise timeout)
-                      else (false, s'', t' ++ t, e')
+                      else (false, s'', t' ++ t, e') *)
+                    (false, 0, t' ++ t, e')
+                    (* disable steps *)
+                    (* (false, 0, t' ++ t, e') *)
                 end
             | inr err => (false, s, t, inr err)
             end
@@ -112,7 +115,7 @@ Module example.
   Definition catchE := @catchE max_steps.
   Arguments catchE {_ _}.
 
-  Instance: Monad (@TraceM err) := @trace_monad max_steps err TimeoutErr.
+  Instance: Monad (@TraceM err) := @trace_monad err TimeoutErr.
   Notation "'trc' A" := (@TraceM err A) (at level 100).
 
   Open Scope string_scope.
