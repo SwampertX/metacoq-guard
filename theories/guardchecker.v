@@ -474,10 +474,10 @@ Definition branches_specif Σ G (discriminant_spec : subterm_spec) (ind : induct
     | Subterm _ _ tree => 
       (** check if the tree refers to the same inductive as we are matching on *)
         (** get the root node (Norec, Mrec etc) of the recarg tree of the discriminant, which cannot be Empty. *)
-        recarg_info <- except (OtherErr "branches_binders_specif" "malformed tree") $ destruct_recarg tree;;
+        recarg_info <- except (OtherErr "branches_specif" "malformed tree") $ destruct_recarg tree;;
         if negb (match_recarg_inductive ind recarg_info) then
           (** the tree talks about a different inductive than we are matching on, so all the constructor's arguments cannot be subterms  *)
-          (** in principle, the only place that calls [branches_binders_specif] is [subterm_specif] when specifying a [tCase].
+          (** in principle, the only place that calls [branches_specif] is [subterm_specif] when specifying a [tCase].
             In that case, the [ind] argument is given by the type of discriminant,
             so it shouldn't differ from that contained in [discriminant_spec] *)
           ret $ inr Not_subterm 
@@ -493,8 +493,8 @@ Definition branches_specif Σ G (discriminant_spec : subterm_spec) (ind : induct
         ret $ map (fun ar => (repeat spec ar)) constr_arities
     | inl all_constr_args_sizes =>
         unwrap $ mapi (fun i (ar : nat) => 
-          args_sizes <- except (IndexErr "branches_binders_specif" "no tree for constructor" i) $ nth_error all_constr_args_sizes i;; (* list (wf_paths) *)
-          assert (length args_sizes == ar) (OtherErr "branches_binders_specif" "number of constructor arguments don't agree");;
+          args_sizes <- except (IndexErr "branches_specif" "no tree for constructor" i) $ nth_error all_constr_args_sizes i;; (* list (wf_paths) *)
+          assert (length args_sizes == ar) (OtherErr "branches_specif" "number of constructor arguments don't agree");;
           trees <- unwrap $ map spec_of_tree args_sizes;;
           ret trees
           ) constr_arities
@@ -820,16 +820,17 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
       (** push l to the stack *)
       let stack' := push_stack_closures G stack l in
       (** get subterm info for the discriminant *)
-      trace "specifying discriminant" ;;
       discriminant_spec <- subterm_specif Σ ρ G [] discriminant;;
+      trace "discriminant spec: " ;;
       trace $ print_subterm_spec Σ discriminant_spec ;;
+      trace "branches binders spec: " ;;
       (** get subterm info for the binders in the constructor branches of the discriminant.
         use [branches_binder_specif] for the original, (arguably) equivalent implementation *)
       branches_binders_specs <- branches_specif Σ G discriminant_spec ind;;
-      (* let list_debug : list (list string):= map (map (print_subterm_spec Σ)) branches_binders_specs in
-      let list_debug' list string := map (A:=list string) (String.concat "\n") list_debug in
-      let debug := String.concat "\n" list_debug' in
-      trace debug ;; *)
+      let list_debug : list (list string):= map (map (print_subterm_spec Σ)) branches_binders_specs in
+      fold_left_i (fun i _ specs =>
+        trace $ "  "^(string_of_nat i)^"-th branch binder" ;;
+        list_iter (fun str => trace $ "    "^str) specs) list_debug (ret tt) ;;
       (** determine subterm info for the full branches *)
       branches_specs <- unwrap $ mapi (fun i branch => 
         binder_specs <- except (IndexErr "subterm_specif" "branches_binders_specif result is too short" i) $ 
