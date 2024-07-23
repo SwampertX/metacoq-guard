@@ -1002,7 +1002,8 @@ Definition check_is_subterm spec tree :=
     intersect it with the subterm tree for yi on the stack. 
   All other subterm information is truncated to Not_subterm. 
 *)
-Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
+Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_element) : exc (list stack_element) :=
+  trace "filter_stack_domain entered" ;;
   '(rtf_context, rtf_body) <- decompose_lam_assum Σ Γ rtf;; 
   (** if the predicate is not dependent, no restriction is needed and we avoid building the recargs tree. *)
   if negb (rel_range_occurs 1 (length rtf_context) rtf_body) then ret stack 
@@ -1027,13 +1028,18 @@ Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_elem
           | tInd ind univ =>  
               (** it's an inductive *)
               (** inspect the corresponding subterm spec on the stack *)
+              trace $ "stack_element_specif :: " ^ print_stack_element Σ elem ;;
               spec' <- stack_element_specif Σ ρ elem;;
+              trace $ "result: " ^ print_subterm_spec Σ spec' ;;
               sarg <- match spec' with 
-                | Not_subterm | Dead_code | Internally_bound_subterm _ => ret spec'
-                | Subterm l s path => 
+                | Not_subterm | Dead_code | Internally_bound_subterm _ => trace "not a subterm" ;; ret spec'
+                | Subterm l s path =>
+                    trace "a subterm, we need to intersect" ;;
                     (** intersect with an approximation of the unfolded tree for [ind] *)
                     (* TODO : when does get_recargs_approx give something other than identity ? *)
                     recargs <- get_recargs_approx Σ ρ Γ path ind ty_args;;
+                    trace $ "recargs: " ^ print_wf_paths Σ recargs ;;
+                    trace $ "path: " ^ print_wf_paths Σ path  ;;
                     path' <- except (OtherErr "filter_stack_domain" "intersection of trees failed: empty") $ inter_wf_paths path recargs;;
                     (* update the recargs tree to [path'] *)
                     ret (Subterm l s path') 
@@ -1050,7 +1056,7 @@ Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_elem
           (** the rest of the stack is restricted to No_subterm, subterm information is not allowed to flow through *)
           ret (List.fold_right (fun _ acc => SArg (set_iota_specif nr Not_subterm) :: acc) [] stack)
       end
-    in filter_stack Γ' rtf_body stack.
+    in res <- filter_stack Γ' rtf_body stack ;; trace "filter_stack_domain done" ;; ret res.
 
 #[bypass_check(guard)]
 Definition find_uniform_parameters (recindxs : list nat) (nargs : nat) (bodies : list term) : nat :=
@@ -1252,10 +1258,18 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       trace "checking branches " ;;
       let rs' := NoNeedReduce::rs in
       let nr := redex_level rs' in
+      trace "subterm_specif of the discriminant: " ;;
       disc_spec <- (subterm_specif Σ ρ G [] discriminant) ;;
+      trace "subterm_specif of the branches: " ;;
       case_spec <- branches_specif Σ G (set_iota_specif nr disc_spec) ci.(ci_ind);;
       trace "filter stack" ;;
-      stack' <- filter_stack_domain Σ ρ G.(loc_env) nr p stack ;; 
+      let result := filter_stack_domain Σ ρ G.(loc_env) nr p stack in
+      stack' <- result ;; 
+      match result with
+      | (_,inr _ ) => trace "THIS SHOULD HAVE BEEN AN ERROR"
+      | _ => trace "OK, no error"
+      end ;;
+      trace "done filtering stack" ;;
       trace $ "  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack' ;;
       rs' <- fold_left_i (fun k rs' br' =>
           (* TODO: quadratic *)
@@ -1495,13 +1509,13 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
       (* Expand if possible, otherwise, last chance, propagate need
         for expansion, in the hope to be eventually erased *)
       catchMap (expand_head tt)
-        (fun err => match err with
+        (fun err => trace "expand head failed, propagating need for expansion" ;; match err with
           | NoReductionPossible =>
               tail <- except (IndexErr "check_rec_call_state" "" 0) $ tl rs ;;
               ret $ e :: tail
           | _ => raise err
           end)
-        (fun '(c, stack') => check_rec_call_stack G (stack' ++ stack) rs c)
+        (fun '(c, stack') => trace "expand head succeeded" ;; check_rec_call_stack G (stack' ++ stack) rs c)
   end
 
 with check_inert_subterm_rec_call G rs c {struct rs} : exc (list fix_check_result) :=
@@ -1510,10 +1524,12 @@ with check_inert_subterm_rec_call G rs c {struct rs} : exc (list fix_check_resul
   check_rec_call_state G needreduce [] rs (fun _ => raise NoReductionPossible)
 
 with check_rec_call G rs c {struct rs} : exc (fix_check_result * list fix_check_result):=
-  trace ("check_rec_call :: "^print_term Σ (ctx_names G.(loc_env)) true c) ;;
+  let str := print_term Σ (ctx_names G.(loc_env)) true c in 
+  trace ("check_rec_call :: ("^ string_of_nat (String.length str) ^ ") " ^ str ) ;;
   res <- check_rec_call_stack G [] (NoNeedReduce :: rs) c ;;
   head <- except (IndexErr "check_rec_call" "" 0) $ hd res ;;
   tail <- except (IndexErr "check_rec_call" "" 0) $ tl res ;;
+  trace ("check_rec_call done ::  ("^ string_of_nat (String.length str) ^ ")") ;;
   ret (head, tail).
 
 (* YJ: just a wrapper to check_rec_call. *)
