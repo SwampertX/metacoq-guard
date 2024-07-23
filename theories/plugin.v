@@ -93,7 +93,7 @@ Fixpoint compute_paths_env Σ0 Σ : TemplateMonad (list (kername * (list wf_path
   end.
 
 Set Universe Polymorphism. 
-Polymorphic Definition tmAnd (ma mb : TemplateMonad bool) := tmBind ma (fun a => if a then mb else ma).
+Polymorphic Definition tmAnd (ma mb : TemplateMonad bool) := tmBind ma (fun a => if a then mb else tmReturn false).
 
 Notation "ma m&& mb" := (tmAnd ma mb) (at level 105).
 
