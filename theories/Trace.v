@@ -69,13 +69,14 @@ Section trace.
   Instance list_trc_unwrap: TrcUnwrap list := @list_unwrap.
 
   Definition lift_exc {X} (a : excOn Y X) : trc X := (false, 0, [], a).
-  Definition add_trace {Z} steps trace (a : trc Z) :=
+  Definition add_trace {Z} (steps : nat) trace (a : trc Z) :=
     match a with
     | (b', steps', trace', z) =>
         if b' then (b', steps', trace', z) else
-          let steps'' := steps + steps' in
+          (* let steps'' := steps + steps' in
           if Nat.leb max_steps steps'' then (true, steps'', trace' ++ trace, z)
-          else (false, steps + steps', trace' ++ trace, z)
+          else (false, steps + steps', trace' ++ trace, z) *)
+          (false, 0, trace' ++ trace, z)
     end.
 
   Definition assert (b : bool) (err : Y) : trc unit :=
@@ -112,7 +113,7 @@ Module example.
   | OtherErr (s : string).
 
   Definition max_steps := 2.
-  Definition catchE := @catchE max_steps.
+  Definition catchE := @catchE.
   Arguments catchE {_ _}.
 
   Instance: Monad (@TraceM err) := @trace_monad err TimeoutErr.
