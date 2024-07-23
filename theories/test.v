@@ -15,7 +15,7 @@ MetaCoq Run (check_fix_ci false f).  *)
 Fixpoint abc_bad (n : nat) := 
   match n with 
   | 0 => 0
-  | S m => abc_bad (match m with O => m | S _ => m end)
+  | S m => abc_bad (match m with O => m | S k => m end)
   end.
 
 MetaCoq Run (check_fix_ci true abc_bad). 

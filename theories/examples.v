@@ -169,8 +169,7 @@ Fixpoint abc (n : nat) :=
   | 0 => 0
   | S n => abc (match n with | 0 => n | S n' => n end)
   end.
-(* FIXME *)
-Fail MetaCoq Run (check_fix_ci true abc). 
+MetaCoq Run (check_fix_ci true abc). 
 
 (** - If matches are applied to some arguments, we "virtually" apply those arguments to the branches (technically, the checker maintains a stack of such virtual arguments). 
     

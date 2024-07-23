@@ -812,10 +812,13 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
   match f with 
   | tRel k => 
       (** we abstract from applications: if [t] is a subterm, then also [t] applied to [l] is a subterm *)
-      (*trace ("subterm_specif : tRel :: is subterm " ++ bruijn_print Σ G.(loc_env) t_whd);;*)
+      trace ("subterm_specif : tRel " ^ string_of_nat k);;
+      trace ("                 Γ.(loc_env):"^(String.concat " " (fst (PrintTermTree.print_context Σ false [] G.(loc_env))))) ;;
+      trace ("                 Γ.(guarded_env):"^(String.concat " \r\n " (map (print_subterm_spec Σ) G.(guarded_env)))) ;;
       ret $ lookup_subterm G k
   | tCase ind_relev rtf discriminant branches =>
-    (* YJ: [ind] is the inductive type we are matching on *)
+      '(rtf_preturn_expanded, branches) <- expand_case Σ ind_relev rtf branches ;;
+      (* YJ: [ind] is the inductive type we are matching on *)
       let ind := ind_relev.(ci_ind) in
       (** push l to the stack *)
       let stack' := push_stack_closures G stack l in
@@ -827,6 +830,7 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
       (** get subterm info for the binders in the constructor branches of the discriminant.
         use [branches_binder_specif] for the original, (arguably) equivalent implementation *)
       branches_binders_specs <- branches_specif Σ G discriminant_spec ind;;
+      trace ("spec of all" ^ string_of_nat (length branches_binders_specs) ^ " branches") ;;
       let list_debug : list (list string):= map (map (print_subterm_spec Σ)) branches_binders_specs in
       fold_left_i (fun i _ specs =>
         trace $ "  "^(string_of_nat i)^"-th branch binder" ;;
@@ -837,11 +841,13 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
           nth_error branches_binders_specs i;;
         (* we push this to the stack, not directly to the guard env, because we haven't entered the lambdas introducing this branch's binders yet *)
         let stack_br := push_stack_args binder_specs stack' in
-        subterm_specif Σ ρ G stack_br branch) (map bbody branches);;
+        subterm_specif Σ ρ G stack_br branch) (branches);;
+      trace "specs of the individual branches" ;;
+      trace $ String.concat " " (map (print_subterm_spec Σ) branches_specs) ;;
       (** take their glb -- in case of no branches, this yields [Dead_code] (absurd elimination) *)
       spec <- subterm_spec_glb branches_specs;;
       (** restrict the subterm info according to the rtf *)
-      restrict_spec_for_match Σ ρ G.(loc_env) spec rtf.(preturn) 
+      restrict_spec_for_match Σ ρ G.(loc_env) spec rtf_preturn_expanded 
   | tFix mfix mfix_ind => 
       (*trace ("subterm_specif : tFix :: enter " ++ bruijn_print Σ G.(loc_env) t_whd);;*)
       cur_fix <- except (IndexErr "subterm_specif" "invalid fixpoint index" mfix_ind) $ nth_error mfix mfix_ind;;
