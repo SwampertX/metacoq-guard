@@ -39,7 +39,7 @@ Inductive guard_exc :=
   | NoReductionPossible. 
 
 (*max bind steps *)
-Definition max_steps := 1000. 
+Definition max_steps := 3000. 
 Definition catchE := @catchE max_steps. 
 Arguments catchE {_ _}. 
 Definition catchMap := @catchMap max_steps _ TimeoutErr. 

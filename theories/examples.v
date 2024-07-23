@@ -37,6 +37,9 @@ Compute (div 6 2).
 
 (** Example : lists *)
 MetaCoq Run (check_inductive (Some "list_tree") list). 
+
+MetaCoq Run (check_inductive (Some "vec_tree") Vector.t). 
+MetaCoq Run (check_inductive (Some "fin_tree") Fin.t). 
 (** 
 
 Inductive list (X : Type) :=
@@ -301,7 +304,7 @@ Require Coq.Vectors.Vector.
 
 (** Taken from  https://github.com/coq/coq/issues/4320 *)
 
-Unset Guard Checking.
+Set Guard Checking.
 Section ilist.
 
 (* Lists of elements whose types depend on an indexing set (CPDT's hlists).
@@ -365,7 +368,6 @@ Definition ith_body
 Fixpoint ith {m : nat} {As : Vector.t A m} (il : ilist As) (n : Fin.t m) {struct n} : B (Vector.nth As n) := 
   @ ith_body (@ ith) m As il n.
 
-(* FIXME: (failure of tree intersection) *)
 MetaCoq Run (check_fix_ci false (@ith)).
 
 End ilist.

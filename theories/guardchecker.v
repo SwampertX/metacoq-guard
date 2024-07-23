@@ -554,6 +554,9 @@ Definition ienv_push_inductive Σ '(Γ, ra_env) ind (pars : list term) : exc ien
   in 
   Γ' <- List.fold_right (fun i acc => acc <- acc;; push_ind i acc) (ret Γ) mib.(ind_bodies);;
   let ra_env' := ra_env_push_inner_inductives_with_params num_bodies in
+  trace $ "pushed " ^
+    (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr) (ra_env'))) ;;
+
   ret (Γ', ra_env').
 
 (** Move the first [n] prods of [c] into the context as elements of non-recursive type. *)
@@ -635,12 +638,16 @@ p is:
         c_inst <- hnf_prod_apps Σ Γ' c inst_unif_lifted;;
         (** move non-uniform parameters into the context *) 
         '(Γ', ra_env', c') <- ienv_decompose_prod Σ ienv' num_non_unif_params c_inst;;
+        trace $ "decomposed into " ^
+          (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr) (ra_env'))) ;;
+
         (** first fetch the trees for this constructor  *)
         constr_trees <- except (IndexErr "build_recargs_nested/mk_ind_recargs" "no tree for inductive" j) $ 
           nth_error trees j;;
         arg_trees <- except (IndexErr "build_recargs_nested/mk_ind_recargs" "no tree for constructor" k) $ 
           nth_error constr_trees k;; 
         (** recursively build the trees for the constructor's arguments, potentially traversing nested inductives *)
+        trace $ print_term Σ (ctx_names Γ') true c' ;;
         build_recargs_constructors Σ ρ (Γ',ra_env') arg_trees c'
       ) abstracted_constrs;;
       (** make the tree for this nested inductive *)
@@ -661,8 +668,9 @@ p is:
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec].*)
 (** This code is very close to check_positive in indtypes.ml, but does no positivity check and does not compute the number of recursive arguments. *)
 (** In particular, this code handles nested inductives as described above. *)
-with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_paths := 
+with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_paths :=
   let '(Γ, ra_env) := ienv in
+  trace ("building recargs in env: "^ (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " (* ^ print_rs *) ) (ra_env)))) ;;
   t_whd <- whd_all Σ Γ t;;
   let '(x, args) := decompose_app t_whd in
   match x with 
@@ -670,10 +678,11 @@ with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_pa
       (** simply enter the prod, adding the quantified element as assumption of non-recursive type (even though the type may in fact be inductive, for the purpose of determining the recargs tree of [t], this is irrelevant)*)
       assert (args == []) (OtherErr "build_recargs" "tProd case: term is ill-typed");;
       build_recargs Σ ρ (ienv_push_var ienv na type mk_norec) tree body
-  | tRel k => 
+  | tRel k =>
+      trace $ "building recargs for tRel " ^ string_of_nat k ;;
       (** free variables are allowed and assigned Norec *)
       catchE (k_ra <- except (OtherErr "" "") $ nth_error ra_env k;; ret (snd k_ra)) 
-            (fun _ => ret mk_norec)
+            (fun _ => trace "free variable " ;; ret mk_norec)
   | tInd ind _ => 
     (** if the given tree for [t] allows it (i.e. has an inductive as label at the root), we traverse a nested inductive *)
     match destruct_recarg tree with 
@@ -683,7 +692,7 @@ with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_pa
                        else ret mk_norec
     | Some (Norec) | Some (Mrec (RecArgPrim _)) => ret mk_norec 
     end
-  | tConst c _ => if is_primitive_positive_container Σ c then ret mk_norec
+  | tConst c _ => if negb $ is_primitive_positive_container Σ c then ret mk_norec
       else match destruct_recarg tree with 
       | None => raise $ OtherErr "build_recargs" "tInd case: malformed recargs tree"
       | Some (Mrec (RecArgPrim c')) => 
@@ -717,10 +726,17 @@ with build_recargs_nested_primitive Σ ρ (ienv : ienv) tree (c : kername) (args
   [ra_env] is used to keep track of the recursive trees of dB variables. 
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec] with a trivial recursive tree.
 *)
-with build_recargs_constructors Σ ρ ienv (trees : list wf_paths) (c : term) {struct c}: exc (list wf_paths) := 
+with build_recargs_constructors Σ ρ ienv (trees : list wf_paths) (c : term) {struct c}: exc (list wf_paths) :=
   let '(Γ, ra_env) := ienv in
-  let recargs_constr_rec := fix recargs_constr_rec ienv (trees : list wf_paths) (lrec :list wf_paths) (c : term) {struct c} : exc (list wf_paths) := 
+  trace ("building recargs before inner loop in Γ: "^(String.concat " " (fst (PrintTermTree.print_context Σ false [] Γ)))) ;;
+  trace ("building recargs before inner loop in ra_env: "^(String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr ) (ra_env)))) ;;
+  let recargs_constr_rec := fix recargs_constr_rec ienv (trees : list wf_paths) (lrec :list wf_paths) (c : term) {struct c} : exc (list wf_paths) :=
+    let '(Γ, ra_env) := ienv in
     c_whd <- whd_all Σ Γ c;;
+    trace ("building recargs in Γ: "^(String.concat " " (fst (PrintTermTree.print_context Σ false [] Γ)))) ;;
+    trace ("building recargs before inner loop in ra_env: "^(String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr ) (ra_env)))) ;;
+    trace $ "building recargs for constructor of type " ^ print_term Σ (ctx_names Γ) true c_whd ;;
+    trace $ "building recargs for constructor of type " ^ string_of_term c_whd ;;
     let '(x, args) := decompose_app c_whd in
     match x with 
     | tProd na type body => 

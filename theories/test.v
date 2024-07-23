@@ -12,7 +12,7 @@ Require Coq.Vectors.Vector.
 
 (** Taken from  https://github.com/coq/coq/issues/4320 *)
 
-Unset Guard Checking.
+(* Unset Guard Checking. *)
 Section ilist.
 
 (* Lists of elements whose types depend on an indexing set (CPDT's hlists).
@@ -25,7 +25,7 @@ Import Coq.Vectors.VectorDef.VectorNotations.
 
 (* MetaCoq Run (check_fix_ci true plus). *)
 
-MetaCoq Run (check_fix_ci false (@Vector.nth)).
+MetaCoq Run (check_fix_ci true (@Vector.nth)).
 
 
 Context {A : Type}. (* The indexing type. *)
@@ -66,15 +66,7 @@ Definition ith_body
     (il : ilist As)
     (n : Fin.t m)
   : B (Vector.nth As n)
-:= Eval cbv beta iota zeta delta [Vector.caseS] in
-  match n in Fin.t m return forall (As : Vector.t A m), B (Vector.nth As n) with
-  | Fin.F1 k =>
-    fun As =>
-      ass
-  | Fin.FS k n' =>
-    fun As =>
-      ass
-  end As.
+:= Eval cbv beta iota zeta delta [Vector.caseS] in ass.
 
 (* note that guard checking is turned off before the section *)
 Fixpoint ith {m : nat} {As : Vector.t A m} (il : ilist As) (n : Fin.t m) {struct n} : B (Vector.nth As n) := 
