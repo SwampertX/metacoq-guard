@@ -539,7 +539,7 @@ Definition ienv_push_inductive Σ '(Γ, ra_env) ind (pars : list term) : exc ien
     *)
   let ra_env_push_inner_inductives_with_params ntypes : list (recarg × wf_paths) := 
     (** make inner inductive types (Imbr in the tree) with recursive references for the individual types *)
-    let rc := rev $ mapi (fun i t => (Mrec (RecArgInd (mkInd ind.(inductive_mind) i)), t)) 
+    let rc := MCList.rev $ mapi (fun i t => (Mrec (RecArgInd (mkInd ind.(inductive_mind) i)), t)) 
                         (mk_rec_calls (X := recarg) ntypes) in
     (** lift the existing ra_env *)
     let ra_env' := map (fun '(r, t) => (r, rtree_lift ntypes t)) ra_env in
@@ -765,7 +765,7 @@ with build_recargs_constructors Σ ρ ienv (trees : list wf_paths) (c : term) {s
         recargs_constr_rec (Γ',ra_env') rest_trees (rec_tree :: lrec) body
     | _ => 
         (* we have processed all the arguments of the constructor -- reverse to get a valid dB-indexed context *)
-        ret $ rev lrec  
+        ret $ MCList.rev lrec  
     end
   in recargs_constr_rec (Γ,ra_env) trees [] c. 
 
@@ -1415,7 +1415,13 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           end
         end)
 
-  | tConst _ _ => ret rs
+  | tConst kn u =>
+      check_rec_call_state G NoNeedReduce stack rs (fun _ =>
+        match lookup_constant Σ kn with
+        | Some {| cst_body := Some b |} => ret (b, stack)
+        | _ => raise (EnvErr "constant" kn "not found")
+        end
+        )
 
    | tLambda x ty body =>
       trace "check_rec_call_stack :: tLambda" ;;
@@ -1582,7 +1588,8 @@ with check_rec_call G rs c {struct rs} : exc (fix_check_result * list fix_check_
   [trees] is a list of recursive structures for the decreasing arguments of the mutual fixpoints.
   [recpos] is a list with the recursive argument indices of the mutually defined fixpoints.
 *)
-Definition check_one_fix G (def : term) : exc unit := 
+Definition check_one_fix G (def : term) : exc unit :=
+  trace $ "check_one_fix :: " ^ print_term Σ G.(loc_env) def ;;
   '(needreduce, rs) <- check_rec_call G [] def ;;
   _ <- assert (#|rs| == 0) (OtherErr "check_one_fix" "check_rec_call doesn't clear the redex stack") ;;
   match needreduce with 
@@ -1676,7 +1683,8 @@ Definition inductive_of_mutfix Σ Γ (fixp : mfixpoint term) : exc (list inducti
   [Γ]: the local environment in which the fixpoint is defined.
   [mfix]: the fixpoint to check.
 *)
-Definition check_fix Σ (ρ : pathsEnv) Γ (mfix : mfixpoint term) : exc unit := 
+Definition check_fix Σ (ρ : pathsEnv) Γ (mfix : mfixpoint term) : exc unit :=
+  trace $ "check_fix :: " ^ print_term Σ Γ (tFix mfix 0) ;;
   (** check that the recursion is over inductives and get those inductives 
     as well as the bodies of the fixpoints *)
   (* trace "enter check_fix";; *)

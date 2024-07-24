@@ -132,7 +132,7 @@ Definition decompose_arity (t : term) (nparams : nat) : context * inductive_arit
   apply (List.firstn nparams) in names.
   apply (List.firstn nparams) in types.
   split.
-  refine (List.rev (map (fun '(x, ty) => vass x ty) (combine names types))). 
+  refine (MCList.rev (map (fun '(x, ty) => vass x ty) (combine names types))). 
   constructor.
   exact ar. exact (ind_get_sort ar). 
 Defined.
@@ -764,7 +764,7 @@ Definition subst_of_rel_context_instance_list sign l :=
     | [], [] => ret subst
     | _, _ => raise (OtherErr "subst_of_rel_context_instance_list" "Instance and signature do not match.")
     end
-  in aux [] (List.rev sign) l.
+  in aux [] (MCList.rev sign) l.
 
 Definition apply_branch Σ Γ (ind:inductive) (idx:nat) (args:list term) (ci:case_info) (branches:list term) : exc term :=
   let args := List.skipn ci.(ci_npar) args in

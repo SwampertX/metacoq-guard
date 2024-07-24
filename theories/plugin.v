@@ -103,22 +103,24 @@ Notation "ma m&& mb" := (tmAnd ma mb) (at level 105).
 Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t} : TemplateMonad bool := 
   match t with
   | tFix mfix _ => 
-      (** we should first recursively check the body of the fix (in case of nested fixpoints!) *)
-      let mfix_ctx := push_assumptions_context (map dname mfix, map dtype mfix) Γ in
-      fold_left (fun mbool d => mbool m&& check_fix_term Σ ρ mfix_ctx d.(dbody)) mfix (tmReturn true)
-      m&& 
-
+      (* (** we should first recursively check the body of the fix (in case of nested fixpoints!) *) *)
+      (* let mfix_ctx := push_assumptions_context (map dname mfix, map dtype mfix) Γ in *)
+      (* fold_left (fun mbool d => mbool m&& check_fix_term Σ ρ mfix_ctx d.(dbody)) mfix (tmReturn true) *)
+      (* m&&  *)
+      tmPrint "checking fixpoint:" ;;
+      tmPrint mfix ;;
       (* NOTE : uncomment if using trace monad *)
-      match (check_fix  (Σ, Monomorphic_ctx) ρ Γ mfix) with
+      res <- tmEval lazy (check_fix  (Σ, Monomorphic_ctx) ρ Γ mfix) ;;
+      match res with
       | (_, trace, inr e) => (* not guarded *)
           trace <- tmEval cbv trace;;
           e <- tmEval cbv e;;
-          _ <- monad_iter tmPrint (List.rev trace) ;;
+          _ <- monad_iter tmPrint (MCList.rev trace) ;;
           tmPrint e ;;
           tmReturn false
       | (_, trace, inl tt) => (* guarded *)
           trace <- tmEval cbv trace;;
-          _ <- monad_iter tmPrint (List.rev trace) ;;
+          _ <- monad_iter tmPrint (MCList.rev trace) ;;
           tmPrint "success" ;;
           tmReturn true
       end
@@ -188,6 +190,8 @@ Definition check_fix {A} (a : A) : TemplateMonad bool :=
         | _ => t
        end in
   check_fix_term Σ paths_env [] t)).
+
+
 
 (* Fails iff check_fix's result doesn't match b. *)
 Definition check_fix_ci {A} (b : bool) (a : A) : TemplateMonad unit :=

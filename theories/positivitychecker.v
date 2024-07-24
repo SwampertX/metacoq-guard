@@ -225,7 +225,7 @@ Section checker.
           (* if we check positivity, then there should be no recursive occurrence in the args *)
           assert (negb (checkpos) || (forallb (fun arg => negb (rel_range_occurs first_ind ntypes arg)) args)) (OtherErr "check_constructor" "");;
           (* we have processed all the arguments of the constructor -- reverse to get a valid dB-indexed context *)
-          ret $ rev lrec  
+          ret $ MCList.rev lrec  
       end
   in check_constructor_rec ienv [] c. 
 
@@ -268,7 +268,7 @@ Section checker.
     let rc := mapi (fun j t => (Mrec (RecArgInd (mkInd kn j)), t)) (mk_rec_calls ntypes) in 
     (* build the initial ra_env - we have to reverse due to dB 
       this contains the entries for recursive uses of the inductives of this block*)
-    let ra_env := rev rc in
+    let ra_env := MCList.rev rc in
     let nparams := length param_context in 
     let check_one_body i cons_names cons_types := 
       (* add parameters to ra_env as non-recursive *)
