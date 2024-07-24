@@ -959,6 +959,8 @@ with extract_stack_hd Σ ρ stack {struct stack} : exc (subterm_spec * list stac
       ret (spec, stack)
   end.
 
+
+
 Definition set_iota_specif (nr : nat) spec := match spec with
   | Not_subterm => if Nat.leb 1 nr then Internally_bound_subterm (Natset.singleton nr) else Not_subterm
   | spec => spec
@@ -1216,17 +1218,17 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       trace "check_rec_call_stack :: tRel" ;;
       if (Nat.leb G.(rel_min_fix) p) && (Nat.ltb p (G.(rel_min_fix) + num_fixes)) then
         let rec_fixp_index := G.(rel_min_fix) + num_fixes - 1 - p in
-        decreasing_arg <- except (IndexErr "check_rec_call_state" "invalid fixpoint index" rec_fixp_index) $ 
+        decreasing_arg <- except (IndexErr "check_rec_call_stack" "invalid fixpoint index" rec_fixp_index) $ 
           nth_error decreasing_args rec_fixp_index;;
         let z_exc := except
-          (IndexErr "check_rec_call_state" "not enough arguments for recursive fix call" decreasing_arg) $ 
+          (IndexErr "check_rec_call_stack" "not enough arguments for recursive fix call" decreasing_arg) $ 
           nth_error stack decreasing_arg
         in
         let g (z : stack_element) : exc (list fix_check_result) :=
           (** get the tree for the recursive argument type *)
           trace "getting wf_paths for recursive param" ;;
           recarg_tree <- except
-            (IndexErr "check_rec_call_state" "no tree for the recursive argument" rec_fixp_index)
+            (IndexErr "check_rec_call_stack" "no tree for the recursive argument" rec_fixp_index)
             (nth_error trees rec_fixp_index);;
           trace $ print_wf_paths Σ recarg_tree ;;
           trace "getting wf_paths for recursive arg" ;;
@@ -1238,7 +1240,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           let guard_err : fix_guard_error := illegal_rec_call G decreasing_arg z in
           match result with
             | NeedReduceSubterm l => ret (m := fun x => exc x) (set_need_reduce G.(loc_env) l guard_err rs)
-            | InvalidSubterm => raise (GuardErr "check_rec_call_state" "invalid subterm" guard_err)
+            | InvalidSubterm => raise (GuardErr "check_rec_call_stack" "invalid subterm" guard_err)
           end
         in
         catchMap z_exc
@@ -1547,8 +1549,11 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
   trace ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
   let e := needreduce_of_head ||| needreduce_of_stack stack in
   match e with
-  | NoNeedReduce => ret rs
+  | NoNeedReduce =>
+      trace $ "no need to reduce, returning " ^ print_rs Σ rs ;;
+      ret rs
   | NeedReduce _ _ =>
+      trace $ "need to reduce, trying to expand head " ;;
       (* Expand if possible, otherwise, last chance, propagate need
         for expansion, in the hope to be eventually erased *)
       catchMap (expand_head tt)
@@ -1562,7 +1567,7 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
   end
 
 with check_inert_subterm_rec_call G rs c {struct rs} : exc (list fix_check_result) :=
-  trace ("check_inert_subterm_call :: "^print_term Σ G.(loc_env) c) ;;
+  trace ("check_inert_subterm_rec_call :: "^print_term Σ G.(loc_env) c) ;;
   trace ("  Γ:"^print_context Σ G.(loc_env)) ;;
   trace ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
   trace ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;

@@ -32,12 +32,9 @@ Section trace.
             | inl e =>
                 match f e with
                 | (b', s', t', e') =>
-                    (* let s'' := 1 + s' + s in
+                    let s'' := 1 + s' + s in
                     if (orb b (Nat.leb max_steps s'')) then (true, s'', t' ++ t, raise timeout)
-                      else (false, s'', t' ++ t, e') *)
-                    (false, 0, t' ++ t, e')
-                    (* disable steps *)
-                    (* (false, 0, t' ++ t, e') *)
+                      else (false, s'', t' ++ t, e')
                 end
             | inr err => (false, s, t, inr err)
             end
@@ -73,10 +70,9 @@ Section trace.
     match a with
     | (b', steps', trace', z) =>
         if b' then (b', steps', trace', z) else
-          (* let steps'' := steps + steps' in
+          let steps'' := steps + steps' in
           if Nat.leb max_steps steps'' then (true, steps'', trace' ++ trace, z)
-          else (false, steps + steps', trace' ++ trace, z) *)
-          (false, 0, trace' ++ trace, z)
+          else (false, steps + steps', trace' ++ trace, z)
     end.
 
   Definition assert (b : bool) (err : Y) : trc unit :=
@@ -113,10 +109,14 @@ Module example.
   | OtherErr (s : string).
 
   Definition max_steps := 2.
-  Definition catchE := @catchE.
+  Definition catchE := @catchE max_steps.
   Arguments catchE {_ _}.
 
-  Instance: Monad (@TraceM err) := @trace_monad err TimeoutErr.
+  Instance: Monad (@TraceM err).
+  Proof.
+    apply trace_monad.
+    all: (apply max_steps || apply TimeoutErr).
+  Defined.
   Notation "'trc' A" := (@TraceM err A) (at level 100).
 
   Open Scope string_scope.
