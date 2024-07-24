@@ -104,7 +104,7 @@ Section trace.
           let t := fast_if TRACE then trace' ++ trace else @nil trace_info in
           let terminate := andb TIMEOUT $ orb b' (Nat.leb max_steps s) in
           (terminate, s, t, z)
-        in fast_if TIMEOUT then (if b then (b', steps', trace', z) else res) else res
+        in fast_if TIMEOUT then (if b' then (b', steps', trace', z) else res) else res
     end.
 
   Definition assert (b : bool) (err : Y) : trc unit :=
@@ -122,16 +122,24 @@ Section trace.
     end.
 
   Definition catchMap {X Z} (e : trc X) (f : Y -> trc Z) (g : X -> trc Z) : trc Z :=
-    match e with
-    | (true, steps, trace, inl e) =>
-        (TIMEOUT, steps, trace, fast_if TIMEOUT then inr timeout else inl e)
-    | (true, steps, trace, inr e) =>
-        (TIMEOUT, steps, trace, inr e)
-    | (false, steps, trace, inr e) =>
-        add_trace steps trace (f e)
-    | (false, steps, trace, inl a) =>
-        add_trace steps trace (g a)
-    end.
+    fast_if TIMEOUT then 
+      match e with
+      | (true, steps, trace, inl e) =>
+          (true, steps, trace, inr timeout)
+      | (true, steps, trace, inr e) =>
+          (true, steps, trace, inr e)
+      | (false, steps, trace, inr e) =>
+          add_trace steps trace (f e)
+      | (false, steps, trace, inl a) =>
+          add_trace steps trace (g a)
+      end
+    else (* we leave TRACE checking to add_trace. *)
+      match e with
+      | (_, steps, trace, inr e) =>
+          add_trace steps trace (f e)
+      | (_, steps, trace, inl a) =>
+          add_trace steps trace (g a)
+      end.
 End trace.
 
 Arguments trc_unwrap {_ _ _ _}.
@@ -145,7 +153,11 @@ Module example.
   Definition catchE := @catchE max_steps.
   Arguments catchE {_ _}.
 
-  Instance: Monad (@TraceM err) := @trace_monad max_steps err.
+  (* Instance: Monad (@TraceM err) := @trace_monad max_steps err. *)
+  Instance: Monad (@TraceM err).
+  Proof. try apply trace_monad. try apply max_steps. try apply TimeoutErr.
+  Defined.
+
   Notation "'trc' A" := (@TraceM err A) (at level 100).
 
   Open Scope string_scope.
