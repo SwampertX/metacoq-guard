@@ -1418,7 +1418,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
   | tConst kn u =>
       check_rec_call_state G NoNeedReduce stack rs (fun _ =>
         match lookup_constant Σ kn with
-        | Some {| cst_body := Some b |} => ret (b, stack)
+        | Some {| cst_body := Some b |} => ret (b, [])
         | _ => raise (EnvErr "constant" kn "not found")
         end
         )
