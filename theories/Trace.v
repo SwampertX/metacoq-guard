@@ -34,27 +34,41 @@ Section trace.
   Instance trace_monad : Monad TraceM :=
     {|
       ret := fun T t => (false, 0, [], ret t);
-      bind := fun T U x f => 
+      bind := fun T U (x : TraceM T) (f : T -> TraceM U) => 
         match x with
         | (b, s, t, e) =>
-            if (andb TIMEOUT b) then (b, s, t, raise timeout) else
+            (* if (andb TIMEOUT b) then (b, s, t, raise timeout) else
             match e with
             | inl e =>
                 match f e return TraceM U with
                 | (b', s', t', e') =>
-                    let s'' := fast_if TIMEOUT then 1 + s' + s else 0 in
-                    let t'' := fast_if TRACE then t' ++ t else [] in
+                    let s'' := if TIMEOUT then 1 + s' + s else 0 in
+                    let t'' := if TRACE then t' ++ t else [] in
                     let terminate := andb TIMEOUT $ orb b (Nat.leb max_steps s'') in
                     (terminate, s'', t'', e')
                 end
             | inr err => (false, s, t, inr err)
-            end
+            end *)
+            let res := match e with
+              | inl e =>
+                  match f e return TraceM U with
+                  | (b', s', t', e') =>
+                      let s'' := (fast_if TIMEOUT then 1 + s' + s else 0) in
+                      let t'' := (fast_if TRACE then t' ++ t else @nil trace_info) in
+                      let terminate := andb TIMEOUT $ orb b (Nat.leb max_steps s'') in
+                      (terminate, s'', t'', e')
+                  end
+              | inr err => (false, s, t, inr err)
+              end
+            in fast_if TIMEOUT then (if b then (b, s, t, raise timeout) else res) else res
         end
     |}.
 
   (* emit a trace element *)
-  Definition trace (i : trace_info) : TraceM unit := (false, 0, [i], ret tt).
-  Definition step : TraceM unit := (false, 1, [], ret tt).
+  Definition trace (i : trace_info) : TraceM unit :=
+    (false, 0, fast_if TRACE then [i] else @nil trace_info, ret tt).
+  Definition step : TraceM unit :=
+    (false, fast_if TIMEOUT then 1 else 0, [], ret tt).
 
 
   (** Lifting of the primitive operations on the except monad *)
@@ -80,11 +94,17 @@ Section trace.
   Definition add_trace {Z} (steps : nat) trace (a : trc Z) :=
     match a with
     | (b', steps', trace', z) =>
-        if (andb TIMEOUT b') then (b', steps', trace', z) else
+        (* if (andb TIMEOUT b') then (b', steps', trace', z) else
         let s := if TIMEOUT then 1 + steps' + steps else 0 in
         let t := if TRACE then trace' ++ trace else [] in
         let terminate := andb TIMEOUT $ orb b' (Nat.leb max_steps s) in
-        (terminate, s, t, z)
+        (terminate, s, t, z) *)
+        let res := 
+          let s := fast_if TIMEOUT then 1 + steps' + steps else 0 in
+          let t := fast_if TRACE then trace' ++ trace else @nil trace_info in
+          let terminate := andb TIMEOUT $ orb b' (Nat.leb max_steps s) in
+          (terminate, s, t, z)
+        in fast_if TIMEOUT then (if b then (b', steps', trace', z) else res) else res
     end.
 
   Definition assert (b : bool) (err : Y) : trc unit :=
@@ -104,8 +124,9 @@ Section trace.
   Definition catchMap {X Z} (e : trc X) (f : Y -> trc Z) (g : X -> trc Z) : trc Z :=
     match e with
     | (true, steps, trace, inl e) =>
-        (true, steps, trace, inr timeout)
-    | (true, steps, trace, inr e) => (true, steps, trace, inr e)
+        (TIMEOUT, steps, trace, fast_if TIMEOUT then inr timeout else inl e)
+    | (true, steps, trace, inr e) =>
+        (TIMEOUT, steps, trace, inr e)
     | (false, steps, trace, inr e) =>
         add_trace steps trace (f e)
     | (false, steps, trace, inl a) =>
@@ -124,7 +145,7 @@ Module example.
   Definition catchE := @catchE max_steps.
   Arguments catchE {_ _}.
 
-  Instance: Monad (@TraceM err) := @trace_monad max_steps err TimeoutErr.
+  Instance: Monad (@TraceM err) := @trace_monad max_steps err.
   Notation "'trc' A" := (@TraceM err A) (at level 100).
 
   Open Scope string_scope.
