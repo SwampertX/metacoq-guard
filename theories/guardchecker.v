@@ -522,6 +522,11 @@ Definition check_inductive_codomain := has_inductive_codomain.
 *)
 
 Definition ienv := context * list (recarg * wf_paths).
+Definition print_ra_env Σ ra_env :=
+  String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr) (ra_env)).
+Definition trace_ienv Σ ienv :=
+  trace $ print_context Σ (fst ienv) ;;
+  trace $ print_ra_env Σ (snd ienv).
 
 Open Scope list.
 
@@ -560,7 +565,7 @@ Definition ienv_push_inductive Σ '(Γ, ra_env) ind (pars : list term) : exc ien
   Γ' <- List.fold_right (fun i acc => acc <- acc;; push_ind i acc) (ret Γ) mib.(ind_bodies);;
   let ra_env' := ra_env_push_inner_inductives_with_params num_bodies in
   trace $ "pushed " ^
-    (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr) (ra_env'))) ;;
+    print_ra_env Σ ra_env' ;;
 
   ret (Γ', ra_env').
 
@@ -644,7 +649,7 @@ p is:
         (** move non-uniform parameters into the context *) 
         '(Γ', ra_env', c') <- ienv_decompose_prod Σ ienv' num_non_unif_params c_inst;;
         trace $ "decomposed into " ^
-          (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr) (ra_env'))) ;;
+          print_ra_env Σ ra_env' ;;
 
         (** first fetch the trees for this constructor  *)
         constr_trees <- except (IndexErr "build_recargs_nested/mk_ind_recargs" "no tree for inductive" j) $ 
@@ -675,7 +680,7 @@ p is:
 (** In particular, this code handles nested inductives as described above. *)
 with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_paths :=
   let '(Γ, ra_env) := ienv in
-  trace ("building recargs in env: "^ (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " (* ^ print_rs *) ) (ra_env)))) ;;
+  trace ("building recargs in env: "^ print_ra_env Σ ra_env) ;;
   t_whd <- whd_all Σ Γ t;;
   let '(x, args) := decompose_app t_whd in
   match x with 
@@ -733,13 +738,13 @@ with build_recargs_nested_primitive Σ ρ (ienv : ienv) tree (c : kername) (args
 *)
 with build_recargs_constructors Σ ρ ienv (trees : list wf_paths) (c : term) {struct c}: exc (list wf_paths) :=
   let '(Γ, ra_env) := ienv in
-  trace ("building recargs before inner loop in Γ: "^(String.concat " " (fst (PrintTermTree.print_context Σ false [] Γ)))) ;;
-  trace ("building recargs before inner loop in ra_env: "^(String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr ) (ra_env)))) ;;
+  trace ("building recargs before inner loop in Γ: "^(print_context Σ Γ)) ;;
+  trace ("building recargs before inner loop in ra_env: "^print_ra_env Σ ra_env) ;;
   let recargs_constr_rec := fix recargs_constr_rec ienv (trees : list wf_paths) (lrec :list wf_paths) (c : term) {struct c} : exc (list wf_paths) :=
     let '(Γ, ra_env) := ienv in
     c_whd <- whd_all Σ Γ c;;
-    trace ("building recargs in Γ: "^(String.concat " " (fst (PrintTermTree.print_context Σ false [] Γ)))) ;;
-    trace ("building recargs before inner loop in ra_env: "^(String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr ) (ra_env)))) ;;
+    trace ("building recargs in Γ: "^(print_context Σ Γ)) ;;
+    trace ("building recargs before inner loop in ra_env: "^print_ra_env Σ ra_env) ;;
     trace $ "building recargs for constructor of type " ^ print_term Σ Γ c_whd ;;
     trace $ "building recargs for constructor of type " ^ string_of_term c_whd ;;
     let '(x, args) := decompose_app c_whd in
