@@ -155,7 +155,9 @@ Module example.
 
   (* Instance: Monad (@TraceM err) := @trace_monad max_steps err. *)
   Instance: Monad (@TraceM err).
-  Proof. try apply trace_monad. try apply max_steps. try apply TimeoutErr.
+  Proof.
+    apply trace_monad.
+    all: (apply max_steps || apply TimeoutErr).
   Defined.
 
   Notation "'trc' A" := (@TraceM err A) (at level 100).

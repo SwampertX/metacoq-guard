@@ -42,8 +42,9 @@ Inductive guard_exc :=
 Definition max_steps := 1000. 
 Definition catchE := @catchE max_steps. 
 Arguments catchE {_ _}. 
-Definition catchMap := @catchMap max_steps _ TimeoutErr. 
-Arguments catchMap {_ _}. 
+Definition catchMap {X Y Z} := @catchMap max_steps X Y Z.
+
+(* Arguments catchMap {_ _}.  *)
   
 Instance: Monad (@TraceM guard_exc) := @trace_monad max_steps guard_exc.
 
