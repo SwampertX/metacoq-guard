@@ -6,7 +6,17 @@ Require Import List.
 (** Provides means to limit the number of binds until timeout and to add trace information *)
 (** Sadly not very usable in practice due to slow Coq reduction. *)
 
+Definition TIMEOUT := false.
+Definition TRACE := false.
+Notation "'fast_if' c 'then' u 'else' v" :=
+  (ltac:(let x := eval cbv in c in
+         match x with
+         | true => exact u
+         | false => exact v
+         end
+  )) (at level 200, u at level 100).
 
+(* Check (fast_if true then 1 else 0). *)
 Section trace.
   Context (max_steps : nat).
   Context {Y : Type}.
@@ -27,17 +37,15 @@ Section trace.
       bind := fun T U x f => 
         match x with
         | (b, s, t, e) =>
-            if b then (b, s, t, raise timeout) else
+            if (andb TIMEOUT b) then (b, s, t, raise timeout) else
             match e with
             | inl e =>
-                match f e with
+                match f e return TraceM U with
                 | (b', s', t', e') =>
-                    (* let s'' := 1 + s' + s in
-                    if (orb b (Nat.leb max_steps s'')) then (true, s'', t' ++ t, raise timeout)
-                      else (false, s'', t' ++ t, e') *)
-                    (false, 0, t' ++ t, e')
-                    (* disable steps *)
-                    (* (false, 0, t' ++ t, e') *)
+                    let s'' := fast_if TIMEOUT then 1 + s' + s else 0 in
+                    let t'' := fast_if TRACE then t' ++ t else [] in
+                    let terminate := andb TIMEOUT $ orb b (Nat.leb max_steps s'') in
+                    (terminate, s'', t'', e')
                 end
             | inr err => (false, s, t, inr err)
             end
@@ -72,11 +80,11 @@ Section trace.
   Definition add_trace {Z} (steps : nat) trace (a : trc Z) :=
     match a with
     | (b', steps', trace', z) =>
-        if b' then (b', steps', trace', z) else
-          (* let steps'' := steps + steps' in
-          if Nat.leb max_steps steps'' then (true, steps'', trace' ++ trace, z)
-          else (false, steps + steps', trace' ++ trace, z) *)
-          (false, 0, trace' ++ trace, z)
+        if (andb TIMEOUT b') then (b', steps', trace', z) else
+        let s := if TIMEOUT then 1 + steps' + steps else 0 in
+        let t := if TRACE then trace' ++ trace else [] in
+        let terminate := andb TIMEOUT $ orb b' (Nat.leb max_steps s) in
+        (terminate, s, t, z)
     end.
 
   Definition assert (b : bool) (err : Y) : trc unit :=
@@ -113,10 +121,10 @@ Module example.
   | OtherErr (s : string).
 
   Definition max_steps := 2.
-  Definition catchE := @catchE.
+  Definition catchE := @catchE max_steps.
   Arguments catchE {_ _}.
 
-  Instance: Monad (@TraceM err) := @trace_monad err TimeoutErr.
+  Instance: Monad (@TraceM err) := @trace_monad max_steps err TimeoutErr.
   Notation "'trc' A" := (@TraceM err A) (at level 100).
 
   Open Scope string_scope.
