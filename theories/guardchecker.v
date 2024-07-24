@@ -559,6 +559,9 @@ Definition ienv_push_inductive Σ '(Γ, ra_env) ind (pars : list term) : exc ien
   in 
   Γ' <- List.fold_right (fun i acc => acc <- acc;; push_ind i acc) (ret Γ) mib.(ind_bodies);;
   let ra_env' := ra_env_push_inner_inductives_with_params num_bodies in
+  trace $ "pushed " ^
+    (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr) (ra_env'))) ;;
+
   ret (Γ', ra_env').
 
 (** Move the first [n] prods of [c] into the context as elements of non-recursive type. *)
@@ -640,12 +643,16 @@ p is:
         c_inst <- hnf_prod_apps Σ Γ' c inst_unif_lifted;;
         (** move non-uniform parameters into the context *) 
         '(Γ', ra_env', c') <- ienv_decompose_prod Σ ienv' num_non_unif_params c_inst;;
+        trace $ "decomposed into " ^
+          (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr) (ra_env'))) ;;
+
         (** first fetch the trees for this constructor  *)
         constr_trees <- except (IndexErr "build_recargs_nested/mk_ind_recargs" "no tree for inductive" j) $ 
           nth_error trees j;;
         arg_trees <- except (IndexErr "build_recargs_nested/mk_ind_recargs" "no tree for constructor" k) $ 
           nth_error constr_trees k;; 
         (** recursively build the trees for the constructor's arguments, potentially traversing nested inductives *)
+        trace $ print_term Σ (ctx_names Γ') true c' ;;
         build_recargs_constructors Σ ρ (Γ',ra_env') arg_trees c'
       ) abstracted_constrs;;
       (** make the tree for this nested inductive *)
@@ -666,8 +673,9 @@ p is:
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec].*)
 (** This code is very close to check_positive in indtypes.ml, but does no positivity check and does not compute the number of recursive arguments. *)
 (** In particular, this code handles nested inductives as described above. *)
-with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_paths := 
+with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_paths :=
   let '(Γ, ra_env) := ienv in
+  trace ("building recargs in env: "^ (String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " (* ^ print_rs *) ) (ra_env)))) ;;
   t_whd <- whd_all Σ Γ t;;
   let '(x, args) := decompose_app t_whd in
   match x with 
@@ -675,10 +683,11 @@ with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_pa
       (** simply enter the prod, adding the quantified element as assumption of non-recursive type (even though the type may in fact be inductive, for the purpose of determining the recargs tree of [t], this is irrelevant)*)
       assert (args == []) (OtherErr "build_recargs" "tProd case: term is ill-typed");;
       build_recargs Σ ρ (ienv_push_var ienv na type mk_norec) tree body
-  | tRel k => 
+  | tRel k =>
+      trace $ "building recargs for tRel " ^ string_of_nat k ;;
       (** free variables are allowed and assigned Norec *)
       catchE (k_ra <- except (OtherErr "" "") $ nth_error ra_env k;; ret (snd k_ra)) 
-            (fun _ => ret mk_norec)
+            (fun _ => trace "free variable " ;; ret mk_norec)
   | tInd ind _ => 
     (** if the given tree for [t] allows it (i.e. has an inductive as label at the root), we traverse a nested inductive *)
     match destruct_recarg tree with 
@@ -688,7 +697,7 @@ with build_recargs Σ ρ ienv (tree : wf_paths) (t : term) {struct t}: exc wf_pa
                        else ret mk_norec
     | Some (Norec) | Some (Mrec (RecArgPrim _)) => ret mk_norec 
     end
-  | tConst c _ => if is_primitive_positive_container Σ c then ret mk_norec
+  | tConst c _ => if negb $ is_primitive_positive_container Σ c then ret mk_norec
       else match destruct_recarg tree with 
       | None => raise $ OtherErr "build_recargs" "tInd case: malformed recargs tree"
       | Some (Mrec (RecArgPrim c')) => 
@@ -722,10 +731,17 @@ with build_recargs_nested_primitive Σ ρ (ienv : ienv) tree (c : kername) (args
   [ra_env] is used to keep track of the recursive trees of dB variables. 
    It need not bind all variables occurring in [t]: to unbound indices, we implicitly assign [Norec] with a trivial recursive tree.
 *)
-with build_recargs_constructors Σ ρ ienv (trees : list wf_paths) (c : term) {struct c}: exc (list wf_paths) := 
+with build_recargs_constructors Σ ρ ienv (trees : list wf_paths) (c : term) {struct c}: exc (list wf_paths) :=
   let '(Γ, ra_env) := ienv in
-  let recargs_constr_rec := fix recargs_constr_rec ienv (trees : list wf_paths) (lrec :list wf_paths) (c : term) {struct c} : exc (list wf_paths) := 
+  trace ("building recargs before inner loop in Γ: "^(String.concat " " (fst (PrintTermTree.print_context Σ false [] Γ)))) ;;
+  trace ("building recargs before inner loop in ra_env: "^(String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr ) (ra_env)))) ;;
+  let recargs_constr_rec := fix recargs_constr_rec ienv (trees : list wf_paths) (lrec :list wf_paths) (c : term) {struct c} : exc (list wf_paths) :=
+    let '(Γ, ra_env) := ienv in
     c_whd <- whd_all Σ Γ c;;
+    trace ("building recargs in Γ: "^(String.concat " " (fst (PrintTermTree.print_context Σ false [] Γ)))) ;;
+    trace ("building recargs before inner loop in ra_env: "^(String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr ) (ra_env)))) ;;
+    trace $ "building recargs for constructor of type " ^ print_term Σ (ctx_names Γ) true c_whd ;;
+    trace $ "building recargs for constructor of type " ^ string_of_term c_whd ;;
     let '(x, args) := decompose_app c_whd in
     match x with 
     | tProd na type body => 
@@ -1007,7 +1023,8 @@ Definition print_check_subterm_result res := match res with
     intersect it with the subterm tree for yi on the stack. 
   All other subterm information is truncated to Not_subterm. 
 *)
-Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_element) : exc (list stack_element) := 
+Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_element) : exc (list stack_element) :=
+  trace "filter_stack_domain entered" ;;
   '(rtf_context, rtf_body) <- decompose_lam_assum Σ Γ rtf;; 
   (** if the predicate is not dependent, no restriction is needed and we avoid building the recargs tree. *)
   if negb (rel_range_occurs 1 (length rtf_context) rtf_body) then ret stack 
@@ -1032,13 +1049,18 @@ Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_elem
           | tInd ind univ =>  
               (** it's an inductive *)
               (** inspect the corresponding subterm spec on the stack *)
+              trace $ "stack_element_specif :: " ^ print_stack_element Σ elem ;;
               spec' <- stack_element_specif Σ ρ elem;;
+              trace $ "result: " ^ print_subterm_spec Σ spec' ;;
               sarg <- match spec' with 
-                | Not_subterm | Dead_code | Internally_bound_subterm _ => ret spec'
-                | Subterm l s path => 
+                | Not_subterm | Dead_code | Internally_bound_subterm _ => trace "not a subterm" ;; ret spec'
+                | Subterm l s path =>
+                    trace "a subterm, we need to intersect" ;;
                     (** intersect with an approximation of the unfolded tree for [ind] *)
                     (* TODO : when does get_recargs_approx give something other than identity ? *)
                     recargs <- get_recargs_approx Σ ρ Γ path ind ty_args;;
+                    trace $ "recargs: " ^ print_wf_paths Σ recargs ;;
+                    trace $ "path: " ^ print_wf_paths Σ path  ;;
                     path' <- except (OtherErr "filter_stack_domain" "intersection of trees failed: empty") $ inter_wf_paths path recargs;;
                     (* update the recargs tree to [path'] *)
                     ret (Subterm l s path') 
@@ -1055,7 +1077,7 @@ Definition filter_stack_domain Σ ρ Γ nr (rtf : term) (stack : list stack_elem
           (** the rest of the stack is restricted to No_subterm, subterm information is not allowed to flow through *)
           ret (List.fold_right (fun _ acc => SArg (set_iota_specif nr Not_subterm) :: acc) [] stack)
       end
-    in filter_stack Γ' rtf_body stack.
+    in res <- filter_stack Γ' rtf_body stack ;; trace "filter_stack_domain done" ;; ret res.
 
 #[bypass_check(guard)]
 Definition find_uniform_parameters (recindxs : list nat) (nargs : nat) (bodies : list term) : nat :=
@@ -1261,10 +1283,18 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       trace "checking branches " ;;
       let rs' := NoNeedReduce::rs in
       let nr := redex_level rs' in
+      trace "subterm_specif of the discriminant: " ;;
       disc_spec <- (subterm_specif Σ ρ G [] discriminant) ;;
+      trace "subterm_specif of the branches: " ;;
       case_spec <- branches_specif Σ G (set_iota_specif nr disc_spec) ci.(ci_ind);;
       trace "filter stack" ;;
-      stack' <- filter_stack_domain Σ ρ G.(loc_env) nr p stack ;; 
+      let result := filter_stack_domain Σ ρ G.(loc_env) nr p stack in
+      stack' <- result ;; 
+      match result with
+      | (_,inr _ ) => trace "THIS SHOULD HAVE BEEN AN ERROR"
+      | _ => trace "OK, no error"
+      end ;;
+      trace "done filtering stack" ;;
       trace $ "  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack' ;;
       rs' <- fold_left_i (fun k rs' br' =>
           (* TODO: quadratic *)
@@ -1511,13 +1541,13 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
       (* Expand if possible, otherwise, last chance, propagate need
         for expansion, in the hope to be eventually erased *)
       catchMap (expand_head tt)
-        (fun err => match err with
+        (fun err => trace "expand head failed, propagating need for expansion" ;; match err with
           | NoReductionPossible =>
               tail <- except (IndexErr "check_rec_call_state" "" 0) $ tl rs ;;
               ret $ e :: tail
           | _ => raise err
           end)
-        (fun '(c, stack') => check_rec_call_stack G (stack' ++ stack) rs c)
+        (fun '(c, stack') => trace "expand head succeeded" ;; check_rec_call_stack G (stack' ++ stack) rs c)
   end
 
 with check_inert_subterm_rec_call G rs c {struct rs} : exc (list fix_check_result) :=
@@ -1529,13 +1559,15 @@ with check_inert_subterm_rec_call G rs c {struct rs} : exc (list fix_check_resul
   check_rec_call_state G needreduce [] rs (fun _ => raise NoReductionPossible)
 
 with check_rec_call G rs c {struct rs} : exc (fix_check_result * list fix_check_result):=
-  trace ("check_rec_call :: "^print_term Σ G.(loc_env) c) ;;
+  let str := print_term Σ G.(loc_env) c in 
+  trace ("check_rec_call :: ("^ string_of_nat (String.length str) ^ ") " ^ str ) ;;
   trace ("  Γ:"^print_context Σ G.(loc_env)) ;;
   trace ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
   trace ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
   res <- check_rec_call_stack G [] (NoNeedReduce :: rs) c ;;
   head <- except (IndexErr "check_rec_call" "" 0) $ hd res ;;
   tail <- except (IndexErr "check_rec_call" "" 0) $ tl res ;;
+  trace ("check_rec_call done ::  ("^ string_of_nat (String.length str) ^ ")") ;;
   ret (head, tail).
 
 (* YJ: just a wrapper to check_rec_call. *)

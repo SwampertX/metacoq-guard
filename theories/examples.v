@@ -37,6 +37,9 @@ Compute (div 6 2).
 
 (** Example : lists *)
 MetaCoq Run (check_inductive (Some "list_tree") list). 
+
+MetaCoq Run (check_inductive (Some "vec_tree") Vector.t). 
+MetaCoq Run (check_inductive (Some "fin_tree") Fin.t). 
 (** 
 
 Inductive list (X : Type) :=
@@ -325,17 +328,21 @@ MetaCoq Run (check_fix_ci true (@ilist)).
 
 Definition icons (a : A) {n} {l : Vector.t A n} (b : B a) (il : ilist l) : ilist (a :: l) := pair b il.
 
-Axiom ilist_hd : forall {n} {As : Vector.t A n} (il : ilist As),
+Definition ilist_hd : forall {n} {As : Vector.t A n} (il : ilist As),
 match As return ilist As -> Type with
 | a :: As' => fun il => B a
 | [] => fun _ => unit
 end il.
+intros. destruct As. exact tt. cbn in il. apply il.
+Defined.
 
-Axiom ilist_tl : forall {n} {As : Vector.t A n} (il : ilist As),
+Definition ilist_tl : forall {n} {As : Vector.t A n} (il : ilist As),
 match As return ilist As -> Type with
 | a :: As' => fun il => ilist As'
 | [] => fun _ => unit
 end il.
+intros. destruct As. exact tt. cbn in il. apply il.
+Defined.
 
 Definition ith_body 
     (ith : forall {m : nat} {As : Vector.t A m} (il : ilist As) (n : Fin.t m), B (Vector.nth As n))
@@ -353,18 +360,18 @@ Definition ith_body
   | Fin.FS k n' =>
     fun As =>
       Vector.caseS (fun n As => forall n', ilist As -> B (Vector.nth As (@ Fin.FS n n')))
-        (fun h n t m il => @ ith _ _ (ilist_tl il) m)
+        (fun h n t SMALLER il => @ ith _ _ (ilist_tl il) SMALLER)
         As n'
   end As il.
 
+(* note that guard checking is turned off before the section *)
 Fixpoint ith {m : nat} {As : Vector.t A m} (il : ilist As) (n : Fin.t m) {struct n} : B (Vector.nth As n) := 
   @ ith_body (@ ith) m As il n.
 
-(* FIXME: broken (Lennard) (failure of tree intersection) *)
-Fail MetaCoq Run (check_fix_ci true (@ith)).
+MetaCoq Run (check_fix_ci false (@ith)).
 
 End ilist.
-
+Set Guard Checking.
 
 (** * Positivity examples *)
 

@@ -45,7 +45,7 @@ Section trees.
 Context {X : Type}.
 Implicit Types (t : rtree X).
 
-Definition default_tree := Param (X:=X) 0 0. (* bogus tree used as default value*)
+Definition default_tree := Param (X:=X) 42 0. (* bogus tree used as default value*)
 
 (* Building trees *)
 (* array of "references" to mutual inductives of innermostly introduced (by Rec) inductive *)
