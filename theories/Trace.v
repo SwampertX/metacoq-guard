@@ -6,8 +6,9 @@ Require Import List.
 (** Provides means to limit the number of binds until timeout and to add trace information *)
 (** Sadly not very usable in practice due to slow Coq reduction. *)
 
-Definition TIMEOUT := false.
-Definition TRACE := false.
+Definition TIMEOUT_TIME := 182.
+Definition TIMEOUT := true.
+Definition TRACE := true.
 Notation "'fast_if' c 'then' u 'else' v" :=
   (ltac:(let x := eval cbv in c in
          match x with
@@ -121,8 +122,10 @@ Section trace.
         end
     end.
 
-  Definition catchMap {X Z} (e : trc X) (f : Y -> trc Z) (g : X -> trc Z) : trc Z :=
-    fast_if TIMEOUT then 
+  Definition catchMap {X Z} (e : trc X) (f : Y -> trc Z) (g : X -> trc Z) : trc Z.
+    Proof using max_steps Y timeout.
+      exact (
+      fast_if TIMEOUT then
       match e with
       | (true, steps, trace, inl e) =>
           (true, steps, trace, inr timeout)
@@ -139,8 +142,11 @@ Section trace.
           add_trace steps trace (f e)
       | (_, steps, trace, inl a) =>
           add_trace steps trace (g a)
-      end.
+      end).
+    Defined.
+
 End trace.
+Check (catchMap : nat -> forall Y : Type, Y -> forall X Z : Type, TraceM X -> (Y -> TraceM Z) -> (X -> TraceM Z) -> TraceM Z).
 
 Arguments trc_unwrap {_ _ _ _}.
 

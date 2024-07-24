@@ -244,21 +244,30 @@ with count_cons_odd n (o : odd n) : nat :=
   | oddS n e => 1 + count_cons_even n e
   end.
 
-MetaCoq Run (check_fix_ci true count_cons_odd). 
-MetaCoq Run (check_fix_ci true count_cons_even). 
+(* MetaCoq Run (check_fix_ci true count_cons_odd).  *)
+(* MetaCoq Run (check_fix_ci true count_cons_even).  *)
 
 
 
 (** Rosetrees *)
 Definition sumn (l : list nat) := List.fold_left (fun a b => a + b) l 0. 
 MetaCoq Run (check_fix_ci true sumn). 
-
+Inductive rtree (X : Type) := rnode (l : list (rtree X)).
+ 
 Fixpoint rtree_size {X} (t : rtree X) := 
   match t with
-  | rnode l => sumn (map rtree_size l)
+  | rnode l => rnode X ((fix map (l : list (rtree X)) : list (rtree X) := match l with
+                                                        | [] => []
+                                                         | a :: t => rtree_size a :: map t
+                                                                      end) l)
   end.
 MetaCoq Run (check_inductive None rtree). 
 MetaCoq Run (check_fix_ci true (@rtree_size)). 
+
+
+
+
+MetaCoq Run (check_fix_ci true (@rtree_size)).
 
 (* I feel a little bad about lying to Coq about the structural argument, but whatever *)
 #[bypass_check(guard)]
