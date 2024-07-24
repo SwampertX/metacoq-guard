@@ -652,7 +652,7 @@ p is:
         arg_trees <- except (IndexErr "build_recargs_nested/mk_ind_recargs" "no tree for constructor" k) $ 
           nth_error constr_trees k;; 
         (** recursively build the trees for the constructor's arguments, potentially traversing nested inductives *)
-        trace $ print_term Σ (ctx_names Γ') true c' ;;
+        trace $ print_term Σ Γ' c' ;;
         build_recargs_constructors Σ ρ (Γ',ra_env') arg_trees c'
       ) abstracted_constrs;;
       (** make the tree for this nested inductive *)
@@ -740,7 +740,7 @@ with build_recargs_constructors Σ ρ ienv (trees : list wf_paths) (c : term) {s
     c_whd <- whd_all Σ Γ c;;
     trace ("building recargs in Γ: "^(String.concat " " (fst (PrintTermTree.print_context Σ false [] Γ)))) ;;
     trace ("building recargs before inner loop in ra_env: "^(String.concat " ;; " (map (fun '(ra, lr) => print_recarg Σ ra ^ " ; " ^ print_wf_paths Σ lr ) (ra_env)))) ;;
-    trace $ "building recargs for constructor of type " ^ print_term Σ (ctx_names Γ) true c_whd ;;
+    trace $ "building recargs for constructor of type " ^ print_term Σ Γ c_whd ;;
     trace $ "building recargs for constructor of type " ^ string_of_term c_whd ;;
     let '(x, args) := decompose_app c_whd in
     match x with 
