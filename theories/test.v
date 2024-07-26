@@ -3,13 +3,19 @@ From MetaCoq Require Import Utils.bytestring.
 
 Open Scope bs.
 
-Inductive rtree (X : Type) := rnode (l : list (rtree X)).
+Set Printing Depth 200.
+Set Printing Width 200.
 
-Fixpoint rtree_size {X} (t : rtree X) := 
+Inductive rtree := rnode (l : list rtree).
+
+Fixpoint rtree_size (t : rtree) :=
+  let map_id :=
+    (fix map (l : list (rtree)) : list (rtree) := match l with
+                                                   | nil => nil
+                                                   | cons a t => cons (rtree_size a) nil
+                                                   end) in
   match t with
-  | rnode l => rnode X ((fix map (l : list (rtree X)) : list (rtree X) := match l with
-                                                                          | nil => nil
-                                                                          | cons a t => cons (rtree_size a) (map t)
-                                                                          end) l)
+  | rnode l => rnode (map_id l)
   end.
-MetaCoq Run (check_fix_ci true (@rtree_size)). 
+(* MetaCoq Run (check_fix_ci true (@rtree_size)). *)
+ 

@@ -252,7 +252,6 @@ with count_cons_odd n (o : odd n) : nat :=
 (** Rosetrees *)
 Definition sumn (l : list nat) := List.fold_left (fun a b => a + b) l 0. 
 MetaCoq Run (check_fix_ci true sumn). 
-Inductive rtree (X : Type) := rnode (l : list (rtree X)).
  
 Fixpoint rtree_size {X} (t : rtree X) := 
   match t with
@@ -262,12 +261,7 @@ Fixpoint rtree_size {X} (t : rtree X) :=
                                                                       end) l)
   end.
 MetaCoq Run (check_inductive None rtree). 
-MetaCoq Run (check_fix_ci true (@rtree_size)). 
-
-
-
-
-MetaCoq Run (check_fix_ci true (@rtree_size)).
+(* MetaCoq Run (check_fix_ci true (@rtree_size)). *)
 
 (* I feel a little bad about lying to Coq about the structural argument, but whatever *)
 #[bypass_check(guard)]

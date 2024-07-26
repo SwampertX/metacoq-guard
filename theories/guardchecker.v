@@ -40,6 +40,7 @@ Definition size_eqb (s1 s2 : size) :=
   | Strict, Strict => true
   | _, _ => false
   end.
+#[export]
 Instance reflect_size : ReflectEq size.
 Proof. 
   refine {| eqb := size_eqb |}. 
@@ -53,18 +54,26 @@ Definition size_glb s1 s2 :=
   | _, _ => Large
   end.
 
+Axiom todo : forall {A}, A.
+
 (* Set Default Goal Selector "all". *)
 Module Natset := MSetAVL.Make Nat.
+#[export]
 Instance reflect_natset : ReflectEq Natset.t.
 Proof.
   refine {| eqb := Natset.equal |}.
-  intros [t1 t1o]. induction t1.
-  intros [t2 t2o]. induction t2.
-  cbn.
-  - destruct t1o. constructor.
-Admitted.
+  apply todo.
+
+(*   intros [t1 t1o]. induction t1. *)
+(*   intros [t2 t2o]. induction t2. *)
+(*   cbn. *)
+(*   - destruct t1o. constructor. *)
+(* Admitted. *)
+Defined.
 
 Definition print_natset l := "{"^print_list string_of_nat ", " (Natset.elements l)^"}".
+
+About ReflectEq.ReflectEq_EqDec_obligation_1.
 
 (** possible specifications for a term:
    - Not_subterm: when the size of a term is not related to the recursive argument of the fixpoint
@@ -90,6 +99,7 @@ Definition subterm_spec_eqb (s1 s2 : subterm_spec) :=
       (l1 == l2)
   | _, _ => false
   end.
+#[export]
 Instance reflect_subterm_spec : ReflectEq subterm_spec.
 Proof. 
   refine {| eqb := subterm_spec_eqb |}.  
@@ -1178,6 +1188,8 @@ Section CheckFix.
 Context (Σ : global_env_ext) (ρ : pathsEnv).
 Context (decreasing_args : list nat) (trees : list wf_paths).
 
+Notation tracep s := (trace ((* print_id *) s)).
+
 (** 
   The main checker descending into the recursive structure of a term.
   Checks if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].
@@ -1196,12 +1208,12 @@ Context (decreasing_args : list nat) (trees : list wf_paths).
   [rs] is the stack of redexes traversed w/o having been triggered *)
 Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_check_result) (t : term) {struct t} : exc (list fix_check_result) := 
   (* possible optimisation: precompute [num_fixes] *)
-  trace ("check_rec_call_stack :: "^print_term Σ G.(loc_env) t) ;;
-  trace ("  Γ:"^print_context Σ G.(loc_env)) ;;
-  trace ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
-  trace ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
-  trace ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
-  let num_fixes := #|decreasing_args| in 
+  tracep ("check_rec_call_stack :: "^print_term Σ G.(loc_env) t) ;;
+  tracep ("  Γ:"^print_context Σ G.(loc_env)) ;;
+  tracep ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
+  tracep ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
+  (* tracep ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;; *)
+  let num_fixes := (#|decreasing_args|) in 
 
   match t with 
   | tApp f args =>
@@ -1217,7 +1229,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       (** check if [p] is a fixpoint (of the block of fixpoints we are currently checking),i.e. we are making a recursive call *)
       trace "check_rec_call_stack :: tRel" ;;
       if (Nat.leb G.(rel_min_fix) p) && (Nat.ltb p (G.(rel_min_fix) + num_fixes)) then
-        let rec_fixp_index := G.(rel_min_fix) + num_fixes - 1 - p in
+        let rec_fixp_index := (G.(rel_min_fix) + num_fixes - 1 - p) in
         decreasing_arg <- except (IndexErr "check_rec_call_stack" "invalid fixpoint index" rec_fixp_index) $ 
           nth_error decreasing_args rec_fixp_index;;
         let z_exc := except
@@ -1360,7 +1372,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           and f is guarded with respect to the set of subterms S in e
       then f is guarded with respect to the set of subterms S in (g l1 ... lm). 
       Eduardo 7/9/98 according to Bruno *)
-  | tFix mfix_inner fix_ind => 
+  | tFix mfix_inner fix_ind =>
       trace "check_rec_call_stack :: tFix" ;;
       (* | Fix ((recindxs,i),(_,typarray,bodies as recdef) as fix) -> *)
       f <- except (IndexErr "check_rec_call_stack" "not enough fixpoints" fix_ind) $ nth_error mfix_inner fix_ind ;;

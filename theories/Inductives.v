@@ -46,7 +46,8 @@ Definition catchMap {X Z} :=
   @catchMap max_steps guard_exc TimeoutErr X Z.
 
 (* Arguments catchMap {_ _}.  *)
-  
+
+#[export]
 Instance: Monad (@TraceM guard_exc).
 Proof.
   apply trace_monad.
@@ -59,6 +60,7 @@ Notation "'exc' A" := (@TraceM guard_exc A) (at level 100) : exc_scope.
 Definition unwrap := @trc_unwrap.
 Arguments unwrap { _ _ _ _}. 
 
+#[export]
 Instance: TrcUnwrap (Y := guard_exc) list. 
 Proof.
   apply list_trc_unwrap.
@@ -464,10 +466,11 @@ Local Infix "==?" := eqb (at level 20).
 Definition eqb_branch (br1 br2 : branch term) : bool :=
   br1.(bcontext) ==? br2.(bcontext) && br1.(bbody) ==? br2.(bbody).
 
-Instance reflect_branch : ReflectEq (branch term).
-Proof.
-  refine {| eqb := eqb_branch |}.
-  intros [nas1 t1]. induction nas1 as [| a1 nas1 IHnas1]; intros [[|a2 nas2] t2].
+#[global, program]
+Instance reflect_branch : ReflectEq (branch term) :=
+  {| eqb := eqb_branch |}.
+Next Obligation. 
+  revert x y. intros [nas1 t1]. induction nas1 as [| a1 nas1 IHnas1]; intros [[|a2 nas2] t2].
   all : unfold eqb_branch; simpl.
   - destruct (t1 ==? t2) eqn:Eqt.
     -- apply eqb_eq in Eqt; subst; now constructor.
@@ -490,10 +493,10 @@ Qed.
 
 (* Definition eqb_predicate :=  *)
 
-Instance reflect_predicate : ReflectEq (predicate term).
-Proof.
-  refine {| eqb := eqb_predicate Instance.eqb eqb |}.
-  intros [] [].
+#[global, program]
+Instance reflect_predicate : ReflectEq (predicate term) :=
+  {| eqb := eqb_predicate Instance.eqb eqb |}.
+Next Obligation.
 Admitted.
 
 Definition map_with_binders {A B : Type} (g : A -> A)
@@ -610,6 +613,7 @@ Definition eqb_recarg_type (rt1 rt2 : recarg_type) :=
     | RecArgPrim c1, RecArgPrim c2 => eqb c1 c2
     | _, _ => false
   end.
+#[export]
 Instance reflect_recarg_type : ReflectEq recarg_type.
 Proof.
   refine {| eqb := eqb_recarg_type |}. 
@@ -623,16 +627,17 @@ Inductive recarg :=
 
 Definition wf_paths := rtree recarg.
 
-Instance reflect_rtree (X : Type) (H: ReflectEq X): ReflectEq (rtree X).
-Proof. 
-  refine {| eqb := rtree_eqb eqb |}.  
-  intros [] []; unfold rtree_eqb; simpl.
-  all: try solve [constructor ; discriminate].
+#[global, program]
+Instance reflect_rtree (X : Type) (H: ReflectEq X): ReflectEq (rtree X) :=
+  {| eqb := rtree_eqb eqb |}.
+Next Obligation. Admitted.
+(* intros [] []; unfold rtree_eqb; simpl. *)
+(*   all: try solve [constructor ; discriminate]. *)
 
-  - destruct (eqb_spec tree_index tree_index0);
-    destruct (eqb_spec ind_index ind_index0);
-    try subst; simpl.
-Admitted.  (* FIXME *)
+(*   - destruct (eqb_spec tree_index tree_index0); *)
+(*     destruct (eqb_spec ind_index ind_index0); *)
+(*     try subst; simpl. *)
+(* Admitted.  (* FIXME *) *)
 
 Definition eqb_recarg (x y : recarg) := 
   match x, y with 
@@ -640,14 +645,12 @@ Definition eqb_recarg (x y : recarg) :=
   | Mrec i, Mrec i' => eqb i i'
   | _, _ => false
   end.
+#[export]
 Instance reflect_recarg : ReflectEq recarg. 
 Proof. 
   refine {| eqb := eqb_recarg |}. 
   intros [] []; unfold eqb_recarg; finish_reflect. 
 Defined.
-
-
-
 
 (** wf_paths env *)
 (** Since the MC representation of inductives does not include wf_paths, we infer them using the positivity checker and keep an additional paths_env. *)
