@@ -15,7 +15,6 @@ Fixpoint rtree_size (t : rtree) :=
                                                    | cons a t => cons (rtree_size a) nil
                                                    end) in
   match t with
-  | rnode l => rnode (map_id l)
+  | rnode l => rnode l
   end.
 (* MetaCoq Run (check_fix_ci true (@rtree_size)). *)
- 

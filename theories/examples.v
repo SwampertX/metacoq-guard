@@ -263,6 +263,17 @@ Fixpoint rtree_size {X} (t : rtree X) :=
 MetaCoq Run (check_inductive None rtree). 
 (* MetaCoq Run (check_fix_ci true (@rtree_size)). *)
 
+Inductive otree := onode (l : option otree).
+
+Fixpoint otree_id (t : otree) :=
+  match t with
+  | onode l => match l with
+               | Some x => onode (Some (otree_id x))
+               | None => onode None
+               end
+  end.
+
+
 (* I feel a little bad about lying to Coq about the structural argument, but whatever *)
 #[bypass_check(guard)]
 Fixpoint rtree_size_broken {X} (t : rtree X) {struct t} := 
