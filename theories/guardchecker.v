@@ -4,6 +4,9 @@ From MetaCoq.Template Require Import Ast AstUtils LiftSubst Pretty Checker.
 
 From MetaCoq.Guarded Require Import MCRTree Inductives.
 
+From ReductionEffect Require Import PrintingEffect.
+
+
 (** * Guard Checker *)
 
 (** List of known defects:
@@ -54,26 +57,17 @@ Definition size_glb s1 s2 :=
   | _, _ => Large
   end.
 
-Axiom todo : forall {A}, A.
-
 (* Set Default Goal Selector "all". *)
 Module Natset := MSetAVL.Make Nat.
-#[export]
-Instance reflect_natset : ReflectEq Natset.t.
-Proof.
-  refine {| eqb := Natset.equal |}.
-  apply todo.
 
-(*   intros [t1 t1o]. induction t1. *)
-(*   intros [t2 t2o]. induction t2. *)
-(*   cbn. *)
-(*   - destruct t1o. constructor. *)
-(* Admitted. *)
+#[export, program]
+Instance reflect_natset : ReflectEq Natset.t :=
+  {| eqb := Natset.equal |}.
+Next Obligation.
+  apply todo.
 Defined.
 
 Definition print_natset l := "{"^print_list string_of_nat ", " (Natset.elements l)^"}".
-
-About ReflectEq.ReflectEq_EqDec_obligation_1.
 
 (** possible specifications for a term:
    - Not_subterm: when the size of a term is not related to the recursive argument of the fixpoint
@@ -1188,7 +1182,7 @@ Section CheckFix.
 Context (Σ : global_env_ext) (ρ : pathsEnv).
 Context (decreasing_args : list nat) (trees : list wf_paths).
 
-Notation tracep s := (trace ((* print_id *) s)).
+Notation tracep s := (trace (print_id s)).
 
 (** 
   The main checker descending into the recursive structure of a term.

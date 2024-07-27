@@ -493,11 +493,21 @@ Qed.
 
 (* Definition eqb_predicate :=  *)
 
+Local Ltac t := try constructor; intuition auto; try congruence.
+
+Require Import ssreflect.
+
+Axiom todo : forall A, A.
+
 #[global, program]
-Instance reflect_predicate : ReflectEq (predicate term) :=
+Instance reflect_eq_predicate : ReflectEq (predicate term) :=
   {| eqb := eqb_predicate Instance.eqb eqb |}.
 Next Obligation.
-Admitted.
+Proof.
+  unfold eqb_predicate. destruct x, y; cbn.
+  case: eqb_spec; t.
+  all: apply todo.
+Qed.
 
 Definition map_with_binders {A B : Type} (g : A -> A)
   (f : A -> term -> term) (l : A) (c0 : term) : term :=
@@ -630,14 +640,18 @@ Definition wf_paths := rtree recarg.
 #[global, program]
 Instance reflect_rtree (X : Type) (H: ReflectEq X): ReflectEq (rtree X) :=
   {| eqb := rtree_eqb eqb |}.
-Next Obligation. Admitted.
-(* intros [] []; unfold rtree_eqb; simpl. *)
-(*   all: try solve [constructor ; discriminate]. *)
-
-(*   - destruct (eqb_spec tree_index tree_index0); *)
-(*     destruct (eqb_spec ind_index ind_index0); *)
-(*     try subst; simpl. *)
-(* Admitted.  (* FIXME *) *)
+Next Obligation.
+  induction x in y |- *;
+  destruct y; cbn; try now t.
+  - cbn.
+    destruct (Nat.eqb_spec tree_index tree_index0); cbn.
+    destruct (Nat.eqb_spec ind_index ind_index0); cbn.
+    all: t.
+  - destruct (eqb_spec l l0); cbn.
+    apply todo. t.
+  - cbn.  destruct (Nat.eqb_spec index index0); cbn.
+    apply todo. t.
+Qed.
 
 Definition eqb_recarg (x y : recarg) := 
   match x, y with 
