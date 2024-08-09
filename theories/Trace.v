@@ -11,7 +11,7 @@ Require Import BinNat.
 
 Definition TIMEOUT_TIME := 3000%N.
 Definition TIMEOUT := false.
-Definition TRACE := true.
+Definition TRACE := false.
 
 Notation "'fast_if' c 'then' u 'else' v" :=
   (ltac:(let x := eval cbv in c in

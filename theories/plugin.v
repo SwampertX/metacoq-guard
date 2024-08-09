@@ -197,3 +197,17 @@ Definition check_fix {A} (a : A) : TemplateMonad bool :=
 Definition check_fix_ci {A} (b : bool) (a : A) : TemplateMonad unit :=
   res <- check_fix a ;;
   if (res == b) then tmReturn tt else tmFail "error".
+
+Definition check_module mod :=
+  refs <- (tmQuoteModule mod) ;;
+  monad_iter (fun ref =>
+                match ref with
+                | ConstRef kn => nm <- tmEval lazy (("checking " ++ string_of_kername kn)%bs) ;;
+                                 tmPrint nm ;;
+                                 t <- tmUnquote (tConst kn Instance.empty) ;;
+                                 t' <- tmEval hnf (my_projT2 t) ;;
+                                 check_fix t' ;; ret tt
+                | _ => ret tt
+                end
+    ) refs ;;
+  ret tt.

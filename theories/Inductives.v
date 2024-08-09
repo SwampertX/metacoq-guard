@@ -798,8 +798,8 @@ Definition apply_branch Σ Γ (ind:inductive) (idx:nat) (args:list term) (ci:cas
   mip <- except (IndexErr "apply_branch" "invalid inductive" idx) $ nth_error mib.(ind_bodies) ind.(inductive_ind) ;;
   cstr_body <- except (IndexErr "apply_branch" "invalid constructor" idx) $ nth_error mip.(ind_ctors) idx ;;
   let ci_cstr_ndecls := #|cstr_body.(cstr_args)| in
-  '(ctx, br') <- decompose_lam_n_assum Σ Γ ci_cstr_ndecls br ;;
-  subst <- subst_of_rel_context_instance_list Γ args ;;
+  '(ctx, br') <- decompose_lam_n_assum Σ [] ci_cstr_ndecls br ;; (* TODO YF: double check we need Γ or [] here. I changed it to [], but this is pretty different from Coq code in inductive.ml *)
+  subst <- subst_of_rel_context_instance_list ctx args ;; 
   ret $ subst0 subst br'.
 
 (* as implemented in [inductive.ml] *)

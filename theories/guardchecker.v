@@ -1205,8 +1205,8 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
   tracep ("check_rec_call_stack :: "^print_term Σ G.(loc_env) t) ;;
   tracep ("  Γ:"^print_context Σ G.(loc_env)) ;;
   tracep ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
+  tracep ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
   tracep ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
-  (* tracep ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;; *)
   let num_fixes := (#|decreasing_args|) in 
 
   match t with 
@@ -1239,7 +1239,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           trace $ print_wf_paths Σ recarg_tree ;;
           trace "getting wf_paths for recursive arg" ;;
           z_tree <- stack_element_specif Σ ρ z;;
-          trace $ print_subterm_spec Σ z_tree ;;
+          trace $ "  result: "^print_subterm_spec Σ z_tree ;;
           trace "checking if arg is a strict subterm via rtree_incl" ;;
           result <- check_is_subterm z_tree recarg_tree;;
           trace $ "  result: "^print_check_subterm_result result ;;
@@ -1300,14 +1300,9 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       disc_spec <- (subterm_specif Σ ρ G [] discriminant) ;;
       trace "subterm_specif of the branches: " ;;
       case_spec <- branches_specif Σ G (set_iota_specif nr disc_spec) ci.(ci_ind);;
-      trace "filter stack" ;;
-      let result := filter_stack_domain Σ ρ G.(loc_env) nr p stack in
-      stack' <- result ;; 
-      match result with
-      | (_,inr _ ) => trace "THIS SHOULD HAVE BEEN AN ERROR"
-      | _ => trace "OK, no error"
-      end ;;
-      trace "done filtering stack" ;;
+      trace $ "filter stack: " ^ print_stack Σ stack ;;
+      stack' <- filter_stack_domain Σ ρ G.(loc_env) nr p stack ;;
+      trace $ "done filtering stack: " ^print_stack Σ stack' ;;
       trace $ "  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack' ;;
       rs' <- fold_left_i (fun k rs' br' =>
           (* TODO: quadratic *)

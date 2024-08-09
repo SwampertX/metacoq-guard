@@ -11,7 +11,6 @@ From MetaCoq.Guarded Require Import MCRTree Inductives.
 Fixpoint boom (x: nat) : False := boom (id (pred x + O)).
 MetaCoq Run (check_fix_ci false boom).
 
-
 Print Nat.sub.
 Fixpoint div (n m : nat) := 
   match n with 
@@ -496,3 +495,20 @@ etransitivity. apply H. constructor.
 symmetry. apply H. constructor. constructor.
 constructor. constructor.
 Qed. *)
+
+
+Require Import Vector.
+
+#[bypass_check(guard)]
+Fixpoint map2 {A B C : Type} (f : A -> B -> C) (n : nat) (v1 : t A n) (v2 : t B n)
+  {struct v1}
+  : t C n :=
+  match v1 with
+  | @nil _ => fun _ => nil C
+  | @cons _ a n' v1' => fun v2 : t B (S n') =>
+                         match v2 with
+                         | @cons _ b n'' v2' => fun v1'' : Vector.t A n'' => cons _ (f a b) _ (map2 f v1'' v2')
+                         end v1'
+  end v2.
+
+MetaCoq Run (check_fix_ci false (@map2)).
