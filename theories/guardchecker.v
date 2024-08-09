@@ -1548,6 +1548,8 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
   trace ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
   trace ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
   trace ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
+  trace ("  needreduce_of_head: "^ print_rs Σ [needreduce_of_head]) ;;
+  trace ("  needreduce_of_head: "^ print_rs Σ [needreduce_of_stack stack]) ;;
   let e := needreduce_of_head ||| needreduce_of_stack stack in
   match e with
   | NoNeedReduce =>
@@ -1558,12 +1560,14 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
       (* Expand if possible, otherwise, last chance, propagate need
         for expansion, in the hope to be eventually erased *)
       catchMap (expand_head tt)
-        (fun err => trace "expand head failed, propagating need for expansion" ;; match err with
-          | NoReductionPossible =>
+        (fun err => trace "expand head failed, propagating need for expansion" ;;
+          (* match err with *)
+          (* | NoReductionPossible => *)
               tail <- except (IndexErr "check_rec_call_state" "" 0) $ tl rs ;;
               ret $ e :: tail
-          | _ => raise err
-          end)
+          (* | _ => raise err *)
+        (* end *))
+        (* TODO YF: double check where the NoReductionPossible check came from, that's not how it's done in OCaml *)
         (fun '(c, stack') => trace "expand head succeeded" ;; check_rec_call_stack G (stack' ++ stack) rs c)
   end
 
