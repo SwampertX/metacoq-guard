@@ -211,3 +211,17 @@ Definition check_module mod :=
                 end
     ) refs ;;
   ret tt.
+
+Definition check_module_ci b mod :=
+  refs <- (tmQuoteModule mod) ;;
+  monad_iter (fun ref =>
+                match ref with
+                | ConstRef kn => nm <- tmEval lazy (("checking " ++ string_of_kername kn)%bs) ;;
+                                 tmPrint nm ;;
+                                 t <- tmUnquote (tConst kn Instance.empty) ;;
+                                 t' <- tmEval hnf (my_projT2 t) ;;
+                                 check_fix_ci b t'
+                | _ => ret tt
+                end
+    ) refs ;;
+  ret tt.
