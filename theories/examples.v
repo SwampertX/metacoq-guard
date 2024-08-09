@@ -275,6 +275,25 @@ Fixpoint test (l : list nat) :=
   end.
 MetaCoq Run (check_fix_ci true test). 
 
+Inductive rtree (A : Set) :=
+  | Node : list (rtree A) (* nested *) -> rtree A.
+
+Module R.
+Definition rtree_rec {A} (P : rtree A -> Set) (Q : list (rtree A) -> Set)
+  (Qnil : Q nil)
+  (Qcons : forall (t : rtree A) (l : list (rtree A)), P t -> Q l -> Q (cons t l))
+  (PNode: forall (children : list (rtree A)), Q children -> P (Node children)) :=
+  fix auxP (r : rtree A) : P r :=
+    let fix auxQ (xs : list (rtree A)) : Q xs :=
+      match xs with
+      | nil => Qnil
+      | cons t l => Qcons t l (auxP t) (auxQ l)
+      end
+    in
+    match r with
+    | Node l => PNode l (auxQ l)
+    end.
+End R.
 
 
 Module wo.

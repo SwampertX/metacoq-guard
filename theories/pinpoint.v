@@ -1,6 +1,6 @@
 From MetaCoq.Guarded Require Import plugin.
-From MetaCoq Require Import Utils.bytestring.
-Open Scope bs.
+(* From MetaCoq Require Import Utils.bytestring. *)
+(* Open Scope bs. *)
 
 (** * Instructive examples of the guard checker.
   The examples listed below aims to explain, from simple to complicated, the inner workings of the guard checker.
@@ -83,6 +83,11 @@ Fixpoint add_obf_head' (m n : nat) {struct m} : nat :=
   Therefore there is no difference. *)
 MetaCoq Run (check_fix_ci true add_obf_head').
 
+Fixpoint add_obf_disc (m n : nat) {struct m} : nat :=
+  match pred (S m) with O => n | S m' => add_obf_disc m' (S n) end.
+
+MetaCoq Run (check_fix_ci true add_obf_disc).
+
 Fixpoint combine_branches_spec (x : nat) :=
   match x as x_match with | O => O
   | S y => match y as y_match with | O => O
@@ -90,7 +95,7 @@ Fixpoint combine_branches_spec (x : nat) :=
     end
   end.
 
-MetaCoq Run (check_fix_ci true f).
+MetaCoq Run (check_fix_ci true combine_branches_spec).
 
 Fail Fixpoint combine_branches_spec' (x : nat) :=
   match x as x_match with | O => O
@@ -106,4 +111,62 @@ Fixpoint combine_branches_spec' (x : nat) :=
     | S z => combine_branches_spec' (match z as z_match with | O => x | S unused => z end)
     end
   end.
-MetaCoq Run (check_fix_ci false f').
+MetaCoq Run (check_fix_ci false combine_branches_spec').
+
+(* power of regular tree *)
+Module Vec.
+Require Import Vector.
+
+Fixpoint map2 {A B C} (f : A -> B -> C) (n : nat) (v1: t A n) (v2: t B n) : t C n :=
+  match v1 with
+  | nil => fun _ => nil C
+  | cons h1 n' t1 => fun v2 : t B (S n') =>
+    match v2 with
+    | cons h2 _ t2 => fun t1 => cons _ (f h1 h2) _ (map2 f _ t1 t2)
+    end t1
+  end v2.
+
+Print map2.
+
+
+(* struct v2 fails *)
+Fixpoint map2 {A B C} (f : A -> B -> C) (n : nat) (v1: t A n) (v2: t B n) : t C n :=
+  match v1 with
+  | nil => fun _ => nil C
+  | cons h1 n' t1 => fun v2 : t B (S n') =>
+    match v2 with
+    | cons h2 _ t2 => fun R => cons _ (f h1 h2) _ (R t2)
+    end (map2 f _ t1)
+  end v2.
+
+(* struct v1 succeeds *)
+Fixpoint map2 {A B C} (f : A -> B -> C) (n : nat) (v1 v2: vec A n) {struct v2} :=
+  match v1 in vec _ k return vec A k -> vec B k with
+  | vnil => fun _ => vnil
+  | vcons k h1 t1 => fun v2 =>
+    match v2 with
+    | vcons k h2 t2 => fun R => vcons k (f h1 h2) (R t2)
+    end (map2 f k t1)
+  end v2.
+
+(* struct v1 should succeed with cut, but doesn't *)
+Fixpoint map2 {A B C} (f : A -> B -> C) (n : nat) (v1 v2: vec A n) {struct v1} :=
+  match v1 in vec _ k return vec A k -> vec B k with
+  | vnil => fun _ => vnil
+  | vcons k h1 t1 => fun v2 =>
+    match v2 return t B with
+    | vcons k h2 t2 => fun t1 => vcons k (f h1 h2) (map2 f k t1 t2)
+    end t1
+  end v2.
+
+(* struct v1 should succeed with cut, but doesn't *)
+Fixpoint map2 {A B C} (f : A -> B -> C) (n : nat) (v1 v2: vec A n) {struct v1} :=
+  match v1 in vec _ k return vec A k -> vec B k with
+  | vnil => fun _ => vnil
+  | vcons k h1 t1 => fun v2 =>
+    match v2 with
+    | vcons k h2 t2 => fun t1 => vcons k (f h1 h2) (map2 f k t1 t2)
+    end t1
+  end v2.
+
+End Vec.

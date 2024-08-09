@@ -963,8 +963,6 @@ with extract_stack_hd Σ ρ stack {struct stack} : exc (subterm_spec * list stac
       ret (spec, stack)
   end.
 
-
-
 Definition set_iota_specif (nr : nat) spec := match spec with
   | Not_subterm => if Nat.leb 1 nr then Internally_bound_subterm (Natset.singleton nr) else Not_subterm
   | spec => spec

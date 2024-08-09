@@ -1,6 +1,7 @@
 From MetaCoq.Utils Require Import MCUtils bytestring.
 From MetaCoq.Guarded Require Import Except util.
 Require Import List.
+Require Import BinNat.
 
 (** Trace Monad built on top of the exception monad for easier debugging. *)
 (** Provides means to limit the number of binds until timeout and to add trace information *)
@@ -8,18 +9,18 @@ Require Import List.
 
 
 Section trace.
-  Context (max_steps : nat).
+  Context (max_steps : N).
   Context {Y : Type}.
   Context (timeout : Y).
 
   Definition trace_info := string.
   Open Scope type_scope.
   Definition TraceM A :=  bool (* timeout *)
-                        * nat (* number of steps on the clock *)
+                        * N (* number of steps on the clock *)
                         * list trace_info (* trace *)
                         * excOn Y A.
   
-  Open Scope nat_scope.
+  Open Scope N_scope.
   (* max steps handling is not totally accurate as we cannot pass the current number of steps into the function in bind, but anyways *)
   Instance trace_monad : Monad TraceM :=
     {|
@@ -33,7 +34,7 @@ Section trace.
                 match f e with
                 | (b', s', t', e') =>
                     let s'' := 1 + s' + s in
-                    if (orb b (Nat.leb max_steps s'')) then (true, s'', t' ++ t, raise timeout)
+                    if (orb b (max_steps <=? s'')) then (true, s'', t' ++ t, raise timeout)
                       else (false, s'', t' ++ t, e')
                 end
             | inr err => (false, s, t, inr err)
@@ -66,12 +67,12 @@ Section trace.
   Instance list_trc_unwrap: TrcUnwrap list := @list_unwrap.
 
   Definition lift_exc {X} (a : excOn Y X) : trc X := (false, 0, [], a).
-  Definition add_trace {Z} (steps : nat) trace (a : trc Z) :=
+  Definition add_trace {Z} (steps : N) trace (a : trc Z) :=
     match a with
     | (b', steps', trace', z) =>
         if b' then (b', steps', trace', z) else
           let steps'' := steps + steps' in
-          if Nat.leb max_steps steps'' then (true, steps'', trace' ++ trace, z)
+          if max_steps <=? steps'' then (true, steps'', trace' ++ trace, z)
           else (false, steps + steps', trace' ++ trace, z)
     end.
 
@@ -108,6 +109,7 @@ Module example.
   | TimeoutErr
   | OtherErr (s : string).
 
+  Open Scope N_scope.
   Definition max_steps := 2.
   Definition catchE := @catchE max_steps.
   Arguments catchE {_ _}.
