@@ -1,6 +1,6 @@
 From MetaCoq.Guarded Require Import plugin.
-(* From MetaCoq Require Import Utils.bytestring. *)
-(* Open Scope bs. *)
+From MetaCoq Require Import Utils.bytestring.
+Open Scope bs.
 
 (** * Instructive examples of the guard checker.
   The examples listed below aims to explain, from simple to complicated, the inner workings of the guard checker.
