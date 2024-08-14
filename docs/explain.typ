@@ -359,3 +359,112 @@ check_is_subterm
   "loc env"     &: ["unused", n, m, "add"]\
 $ ],
 )
+
+#pagebreak()
+= `f`
+
+#table(columns: (auto, auto),
+align: start,
+
+[```ml
+Fixpoint f (x : bool) :=
+  let _ := f x in true.
+``` ],
+
+[ $\
+  "call stack"  &: []\
+  "stack"       &: []\
+  "redex stack" &: []\
+  "guard env"   &: []\
+  "loc env"     &: []\
+$ ],
+
+[```ml
+Fixpoint f (x : bool) :=
+  let b := f x in true.
+``` ],
+
+[ $\
+  "call stack"  &: []\
+  "stack"       &: []\
+  "redex stack" &: []\
+  "guard env"   &: []\
+  "loc env"     &: []\
+$ ],
+
+[```ml
+let b := f x in true.
+``` ],
+
+[ $\
+  "call stack"  &: ["tLetIn"]\
+  "stack"       &: []\
+  "redex stack" &: ["NoNeed"]\
+  "guard env"   &: ["Large"]\
+  "loc env"     &: [x,f]\
+$ ],
+
+[```ml
+f x (* bound term *)
+``` ],
+
+[ $\
+  "call stack"  &: ["tApp", "tLetIn"]\
+  "stack"       &: []\
+  "redex stack" &: ["NoNeed", "NoNeed"]\
+  "guard env"   &: ["Large"]\
+  "loc env"     &: [x,f]\
+$ ],
+
+[```ml
+x
+``` ],
+
+[ $\
+  "call stack"  &: ["tRel", "tApp", "tLetIn"]\
+  "stack"       &: []\
+  "redex stack" &: ["NoNeed", "NoNeed", "NoNeed"]\
+  "guard env"   &: ["Large"]\
+  "loc env"     &: [x,f]\
+$ ],
+
+[```ml
+f
+``` ],
+
+[ $\
+  "call stack"  &: ["tRel", "tApp", "tLetIn"]\
+  "stack"       &: ["SClosure" x]\
+  "redex stack" &: ["NoNeed", "NoNeed", "NoNeed"]\
+  "guard env"   &: ["Large"]\
+  "loc env"     &: [x,f]\
+$ ],
+
+[```ml
+f
+``` ],
+
+[ $\
+  "call stack"  &: ["tRel", "tApp", "tLetIn"]\
+  "stack"       &: ["SClosure" x]\
+  "redex stack" &: ["NoNeed", "NoNeed", "NoNeed"]\
+  "guard env"   &: ["Large"]\
+  "loc env"     &: [x,f]\
+$ ],
+
+[ ```ml
+(* internal *)
+check_is_subterm
+  (subterm_specif x)
+  (wf_paths bool)
+== NotSubterm
+``` ],
+
+[ $\
+  "call stack"  &: ["tRel", "tApp", "tLetIn"]\
+  "stack"       &: ["SClosure" x]\
+  "redex stack" &: ["NoNeed", "NoNeed", "NoNeed"]\
+  "guard env"   &: ["Large"]\
+  "loc env"     &: [x,f]\
+$ ],
+)
