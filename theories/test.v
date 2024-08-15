@@ -2,10 +2,19 @@ From MetaCoq.Guarded Require Import plugin.
 From MetaCoq Require Import Utils.bytestring.
 Open Scope bs.
 
+Fixpoint add (m n : nat) :nat :=
+  match m with
+  | O => n
+  | S m' => add m' (S n)
+  end.
+
+MetaCoq Run (check_fix_ci true add).
+
 Fixpoint f (n:nat) :=
+  let g := id f in
   match n with
   | O => O
-  | S n' => let m := id n' in f m
+  | S n' => g n'
   end.
 
 MetaCoq Run (check_fix_ci true f).

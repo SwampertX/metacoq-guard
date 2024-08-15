@@ -987,6 +987,7 @@ Definition illegal_rec_call G fixpt elt := match elt with
 
 Definition set_need_reduce_one Γ nr err rs := update_list rs (#|rs| - nr) (NeedReduce Γ err).
 
+(* FIXME: Worst case is quadratic. should sort [l] and iterate. *)
 Definition set_need_reduce Γ l err rs := Natset.fold (fun n => set_need_reduce_one Γ n err) l rs.
 
 Definition set_need_reduce_top Γ err rs := set_need_reduce_one Γ (List.length rs) err rs.
@@ -1352,10 +1353,10 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
             ret (c', [])
         | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
         | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ =>
-            raise $ OtherErr "check_rec_call_stack :: tCase" "whd_all is broken"
+            raise NoReductionPossible
         | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
         | tProj _ _ | tCast _ _ _ | tEvar _ _ =>
-            raise NoReductionPossible
+            raise $ OtherErr "check_rec_call_stack :: tCase" "whd_all is broken"
         end) ;;
         trace "done checking case" ;;
         ret res
@@ -1392,7 +1393,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       let nuniformparams := find_uniform_parameters (map rarg mfix_inner) #|stack| bodies in
       let bodies := drop_uniform_parameters nuniformparams bodies in
       let fix_stack := filter_fix_stack_domain (redex_level rs) decrArg stack nuniformparams in
-      let fix_stack := if Nat.ltb decrArg (List.length stack) then List.firstn (decrArg+1) fix_stack else fix_stack in
+      let fix_stack := if Nat.ltb decrArg (List.length stack) then List.firstn (S decrArg) fix_stack else fix_stack in
       let stack_this := lift_stack nbodies fix_stack in
       let stack_others := lift_stack nbodies (List.firstn nuniformparams fix_stack) in
       (* Check guard in the expanded fix *)
@@ -1400,7 +1401,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           rs' <- rs' ;;
           let fix_stack := if fix_ind == j then stack_this else stack_others in
           (* FIXME: possible db error *)
-          check_nested_fix_body G' recindx fix_stack rs' body)
+          check_nested_fix_body G' (S recindx) fix_stack rs' body)
         (map rarg mfix_inner) bodies (ret rs') ;;
       needreduce_fix <- except (IndexErr "check_rec_call_stack :: tFix" "" 0) $ hd rs' ;;
       rs <- except (IndexErr "check_rec_call_stack :: tFix" "" 0) $ tl rs' ;;
@@ -1512,15 +1513,14 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
             raise NoReductionPossible
         end)
 
-  | tVar _ => ret rs
-  (* FIXME: do vars work in MC? *)
+  | tVar id => ret rs
   (* | tVar id => 
       check_rec_call_state G NoNeedReduce stack rs (fun tt =>
         entry <- except (OtherErr "check_rec_call_stack" "unknown variable") $
-          find (fun ctx_decl => ctx_decl.(decl_name) == id) G.(loc_env);;
+          find (fun ctx_decl => string_of_name ctx_decl.(decl_name).(binder_name) == id) G.(loc_env);;
         match entry.(decl_body) with
-        | None => None
-        | Some t => Some (t, [])
+        | None => raise $ OtherErr "check_rec_call_stack :: tVar" (id^" not found in context")
+        | Some t => ret (t, [])
         end) *)
    
   | tLetIn x c t b =>
@@ -1561,11 +1561,11 @@ with check_nested_fix_body G (decr:nat) stack (rs : list fix_check_result) (body
           (** push to env as non-recursive variable and continue recursively *)
           rs <- check_inert_subterm_rec_call G rs ty ;;
           '(G', stack', body') <- pop_argument Σ ρ NoNeedReduce G elt stack x ty body ;;
-          check_nested_fix_body G' decr stack' rs body'
+          check_nested_fix_body G' (pred decr) stack' rs body'
       | [] =>
           (** we have arrived at the recursive arg *)
           let G' := push_var_guard_env G (redex_level rs) x ty in
-          check_nested_fix_body G' decr [] rs body
+          check_nested_fix_body G' (pred decr) [] rs body
       end
   | _ => raise $ GuardErr "check_nested_fix_body" "illformed inner fix body" NotEnoughAbstractionInFixBody
   end
@@ -1617,6 +1617,15 @@ with check_rec_call G rs c {struct rs} : exc (fix_check_result * list fix_check_
   trace ("check_rec_call done ::  ("^ string_of_nat (String.length str) ^ ")") ;;
   ret (head, tail).
 
+Lemma check_rec_call_rs : forall G rs c res,
+  res = check_rec_call G rs c ->
+  (exists e, res = raise e) \/ (exists rs', res = ret rs' /\ #|snd rs'| = #|rs|).
+Proof.
+intros G rs c res H.
+subst res.
+induction c.
+2: cbn; right; unfold check_rec_call; exists (NoNeedReduce, rs); simpl.
+
 (* YJ: just a wrapper to check_rec_call. *)
 (** Check if [def] is a guarded fixpoint body, with arguments up to (and including)
   the recursive argument being introduced in the context [G]. 
@@ -1627,7 +1636,8 @@ with check_rec_call G rs c {struct rs} : exc (fix_check_result * list fix_check_
 Definition check_one_fix G (def : term) : exc unit :=
   trace $ "check_one_fix :: " ^ print_term Σ G.(loc_env) def ;;
   '(needreduce, rs) <- check_rec_call G [] def ;;
-  _ <- assert (#|rs| == 0) (OtherErr "check_one_fix" "check_rec_call doesn't clear the redex stack") ;;
+  trace $ print_rs Σ rs ;;
+  assert (#|rs| == 0) (OtherErr "check_one_fix" "check_rec_call doesn't clear the redex stack") ;;
   match needreduce with 
   | NeedReduce Γ e => raise (GuardErr "check_one_fix" "" e)
   | NoNeedReduce => ret tt
