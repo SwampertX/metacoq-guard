@@ -4,7 +4,10 @@ From MetaCoq.Template Require Import Ast AstUtils LiftSubst Pretty Checker.
 
 From MetaCoq.Guarded Require Import MCRTree Inductives.
 
-From ReductionEffect Require Import PrintingEffect.
+(* Uncomment to use printing effect. *)
+(* From ReductionEffect Require Import PrintingEffect. *)
+(* Notation tracep s := (trace (print_id s)). *)
+Notation tracep s := (trace s).
 
 
 (** * Guard Checker *)
@@ -1166,7 +1169,6 @@ Section CheckFix.
 Context (Σ : global_env_ext) (ρ : pathsEnv).
 Context (decreasing_args : list nat) (trees : list wf_paths).
 
-Notation tracep s := (trace (print_id s)).
 
 (** 
   The main checker descending into the recursive structure of a term.

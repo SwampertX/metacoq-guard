@@ -54,7 +54,7 @@ Definition res :=
   | _ => nil
   end.
 
-From ReductionEffect Require Import PrintingEffect.
+(* From ReductionEffect Require Import PrintingEffect. *)
 
 Definition failure := fun _UNBOUND_REL_3 =>
   (String.String " "
