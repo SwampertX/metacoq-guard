@@ -36,6 +36,9 @@ Inductive guard_exc :=
   | GuardErr (w : loc) (s : string) (e : fix_guard_error)
   | PositivityError (w : loc) (s : string)
   | TimeoutErr
+  (* this is the join of the trace/except monad's [guard_exc]
+    with the option monad's [None],
+    in [expand_head] of [check_rec_call_state]. *)
   | NoReductionPossible. 
 
 (*max bind steps *)

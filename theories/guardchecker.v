@@ -9,19 +9,6 @@ From ReductionEffect Require Import PrintingEffect.
 
 (** * Guard Checker *)
 
-(** List of known defects:
-  - The used MetaCoq reduction (from the Checker) does not handle projections.
-  - constants and constant unfolding is not handled faithfully in MetaCoq. 
-    The guardedness checker will be able to unfold constants even when they should be opaque. 
-
-  - I don't currently understand the exact reasons why restrictions of subterm info flow through dependent matches is needed in some cases.
-    I have documented what is restricted, but not why it is needed.
-
-  - there are likely tons of bugs (e.g. dB off-by-ones) in code which I couldn't properly test due to the slow reduction.
-    
-  - good luck with attempting to formally verify any of this stuff :DD
-*)
-
 (*Definition print {A} (a : A) : exc unit := *)
   (*ret (print a).*)
 
@@ -126,7 +113,6 @@ Definition print_size s :=
   | Strict => "Strict"
   end.
 
-(** TODO *)
 Definition print_subterm_spec Σ (s : subterm_spec) :=
   match s with 
   | Subterm l s paths => "Subterm "^(print_natset l)^" " ++ print_size s ++ " (" ++ print_wf_paths Σ paths ++ ")"
@@ -367,7 +353,7 @@ Inductive stack_element :=
   (* Arguments in the evaluation stack.
     [t] is typed in [G]
     [nbinders] is the number of binders added in the current env on top of [G.genv]
-    TODO [r] denotes if reduction is needed.
+    [r] denotes if reduction is needed.
     *)
   | SClosure (r : fix_check_result) G (nbinders : nat) (t : term)
   (* arguments applied to a "match": only their spec flows through the match *)
@@ -451,7 +437,7 @@ Definition branches_binders_specif Σ G (discriminant_spec : subterm_spec) (ind 
           (** in principle, the only place that calls [branches_binders_specif] is [subterm_specif] when specifying a [tCase].
             In that case, the [ind] argument is given by the type of discriminant,
             so it shouldn't differ from that contained in [discriminant_spec] *)
-          ret $ tabulate (fun _ => Not_subterm) ar (** TODO: should throw error instead? ProgrammingError? *)
+          ret $ tabulate (fun _ => Not_subterm) ar 
         else 
           (** get trees for the arguments of the i-th constructor *)
           (** YJ: perhaps too much work, just need to map on the i-th branch
@@ -795,7 +781,6 @@ Definition get_recargs_approx Σ ρ Γ (tree : wf_paths) (ind : inductive) (args
     and I is an inductive, 
     then subterm information is allowed to propagate. The subterm tree is intersected with the one for [I] computed by [get_recargs_approx].
  *)
-(* TODO: how does get_recargs_approx play into this?*)
 Definition restrict_spec_for_match Σ ρ Γ spec (rtf : term) : exc subterm_spec := 
   match spec with
   | Not_subterm | Internally_bound_subterm _ => ret spec
@@ -816,7 +801,6 @@ Definition restrict_spec_for_match Σ ρ Γ spec (rtf : term) : exc subterm_spec
           | Dead_code => ret Dead_code
           | Subterm l size tree => 
               (** intersect with approximation obtained by unfolding *)
-              (* TODO: when does get_recargs_approx actually do something other than identity? *)
               recargs <- get_recargs_approx Σ ρ Γ tree ind args;;
               recargs <- except (OtherErr "restrict_spec_for_match" "intersection failed: empty") $ inter_wf_paths tree recargs;;
               ret (Subterm l size recargs)
@@ -895,7 +879,7 @@ Fixpoint subterm_specif Σ ρ G (stack : list stack_element) t {struct t}: exc s
         (** push fixpoints to the guard env *)
         let G' := push_fix_guard_env G mfix in
         (** we let the current fixpoint be a strict subterm *)
-        (* TODO: is this sound? why is it needed? nested fixes? *)
+        (* TODO: is this sound? why is it needed? nested fixes? Same question raised in the OCaml impl *)
         let G' := update_guard_spec G' (num_fixes - mfix_ind) (Subterm Natset.empty Strict rectree) in
         let decreasing_arg := cur_fix.(rarg) in
         let body := cur_fix.(dbody) in 
@@ -1255,7 +1239,8 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       else
         check_rec_call_state G NoNeedReduce stack rs (fun _ =>
           entry <- except (IndexErr "check_rec_call" ("dB index out of range"^print_context Σ G.(loc_env))p) $ nth_error G.(loc_env) p;;
-          except (OtherErr "check_rec_call_stack :: tRel" "found assumption instead of definition") $ option_map (fun t => (lift0 p t, [])) entry.(decl_body)
+          (* except (OtherErr "check_rec_call_stack :: tRel" "found assumption instead of definition") $ option_map (fun t => (lift0 p t, [])) entry.(decl_body) *)
+          except NoReductionPossible $ option_map (fun t => (lift0 p t, [])) entry.(decl_body)
         )
 
   (** Assume we are checking the fixpoint f. For checking [g a1 ... am] where
@@ -1337,7 +1322,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
             ret (c', [])
         | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
         | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ =>
-            raise $ OtherErr "check_rec_call_stack :: tCase" "whd_all is broken"
+            raise $ OtherErr "check_rec_call_stack :: tCase" "malformed term"
         | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
         | tProj _ _ | tCast _ _ _ | tEvar _ _ =>
             raise NoReductionPossible
@@ -1384,8 +1369,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       rs' <- fold_left2_i (fun j rs' recindx body =>
           rs' <- rs' ;;
           let fix_stack := if fix_ind == j then stack_this else stack_others in
-          (* FIXME: possible db error *)
-          check_nested_fix_body G' recindx fix_stack rs' body)
+          check_nested_fix_body G' (S recindx) fix_stack rs' body)
         (map rarg mfix_inner) bodies (ret rs') ;;
       needreduce_fix <- except (IndexErr "check_rec_call_stack :: tFix" "" 0) $ hd rs' ;;
       rs <- except (IndexErr "check_rec_call_stack :: tFix" "" 0) $ tl rs' ;;
@@ -1411,10 +1395,10 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
               ret (f', stack)
           | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
           | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ =>
-              raise $ OtherErr "check_rec_call_stack :: tCase" "whd_all is broken"
+              raise $ OtherErr "check_rec_call_stack :: tCase" "malformed term"
           | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
           | tProj _ _ | tCast _ _ _ | tEvar _ _ =>
-              raise $ NoReductionPossible
+              raise NoReductionPossible
           end
         end)
 
@@ -1422,7 +1406,8 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       check_rec_call_state G NoNeedReduce stack rs (fun _ =>
         match lookup_constant Σ kn with
         | Some {| cst_body := Some b |} => ret (subst_instance u b, [])
-        | _ => raise (EnvErr "constant" kn "not found")
+        (* | _ => raise (EnvErr "constant" kn "not found") *)
+        | _ => raise NoReductionPossible
         end
         )
 
@@ -1476,7 +1461,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
             ret (arg, [])
         | tCoFix _ _ | tInd _ _ | tLambda _ _ _ | tProd _ _ _ | tLetIn _ _ _ _
         | tSort _ | tInt _ | tFloat _ | tArray _ _ _ _ =>
-            raise $ OtherErr "check_rec_call_stack :: tProj" "whd_all is broken"
+            raise $ OtherErr "check_rec_call_stack :: tCase" "malformed term"
         | tRel _ | tVar _ | tConst _ _ | tApp _ _ | tCase _ _ _ _ | tFix _ _
         | tProj _ _ | tCast _ _ _ | tEvar _ _ =>
             raise NoReductionPossible
@@ -1531,15 +1516,23 @@ with check_nested_fix_body G (decr:nat) stack (rs : list fix_check_result) (body
           (** push to env as non-recursive variable and continue recursively *)
           rs <- check_inert_subterm_rec_call G rs ty ;;
           '(G', stack', body') <- pop_argument Σ ρ NoNeedReduce G elt stack x ty body ;;
-          check_nested_fix_body G' decr stack' rs body'
+          check_nested_fix_body G' (pred decr) stack' rs body'
       | [] =>
           (** we have arrived at the recursive arg *)
           let G' := push_var_guard_env G (redex_level rs) x ty in
-          check_nested_fix_body G' decr [] rs body
+          check_nested_fix_body G' (pred decr) [] rs body
       end
   | _ => raise $ GuardErr "check_nested_fix_body" "illformed inner fix body" NotEnoughAbstractionInFixBody
   end
 
+(** In OCaml code, [check_rec_call_state] accepts [expand_head]
+  with the signature [unit -> option (term * list stack_element)].
+  In our trace monad-based implementation, the naive signature would be
+  [unit -> exc (option (term * list stack_element))],
+  but it is equivalent to joining the trace monad and the option monad
+  with a new [guard_exc] NoReductionPossible.
+  This might not be the original meaning of [None] in the OCaml implementation,
+  but it achieves the same effect. *)
 with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> exc (term * list stack_element)) {struct rs}:=
   (* Test if either the head or the stack of a state
     needs the state to be reduced before continuing checking *)
@@ -1561,13 +1554,12 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
         for expansion, in the hope to be eventually erased *)
       catchMap (expand_head tt)
         (fun err => trace "expand head failed, propagating need for expansion" ;;
-          (* match err with *)
-          (* | NoReductionPossible => *)
+          match err with
+          | NoReductionPossible =>
               tail <- except (IndexErr "check_rec_call_state" "" 0) $ tl rs ;;
               ret $ e :: tail
-          (* | _ => raise err *)
-        (* end *))
-        (* TODO YF: double check where the NoReductionPossible check came from, that's not how it's done in OCaml *)
+          | _ => raise err
+          end)
         (fun '(c, stack') => trace "expand head succeeded" ;; check_rec_call_stack G (stack' ++ stack) rs c)
   end
 

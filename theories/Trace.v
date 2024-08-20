@@ -4,11 +4,6 @@ Require Import List.
 
 Require Import BinNat.
 
-
-(** Trace Monad built on top of the exception monad for easier debugging. *)
-(** Provides means to limit the number of binds until timeout and to add trace information *)
-(** Sadly not very usable in practice due to slow Coq reduction. *)
-
 Definition TIMEOUT_TIME := 3000%N.
 Definition TIMEOUT := false.
 Definition TRACE := false.
@@ -163,7 +158,7 @@ Section trace.
     Defined.
 
 End trace.
-Check (catchMap : N -> forall Y : Type, Y -> forall X Z : Type, TraceM X -> (Y -> TraceM Z) -> (X -> TraceM Z) -> TraceM Z).
+(* Check (catchMap : N -> forall Y : Type, Y -> forall X Z : Type, TraceM X -> (Y -> TraceM Z) -> (X -> TraceM Z) -> TraceM Z). *)
 
 Arguments trc_unwrap {_ _ _ _}.
 
