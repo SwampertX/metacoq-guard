@@ -4,6 +4,9 @@ From MetaCoq.Template Require Import Ast AstUtils LiftSubst Pretty Checker.
 
 From MetaCoq.Guarded Require Import MCRTree Inductives.
 
+From ReductionEffect Require Import PrintingEffect.
+
+
 (** * Guard Checker *)
 
 (** List of known defects:
@@ -40,6 +43,7 @@ Definition size_eqb (s1 s2 : size) :=
   | Strict, Strict => true
   | _, _ => false
   end.
+#[export]
 Instance reflect_size : ReflectEq size.
 Proof. 
   refine {| eqb := size_eqb |}. 
@@ -55,14 +59,13 @@ Definition size_glb s1 s2 :=
 
 (* Set Default Goal Selector "all". *)
 Module Natset := MSetAVL.Make Nat.
-Instance reflect_natset : ReflectEq Natset.t.
-Proof.
-  refine {| eqb := Natset.equal |}.
-  intros [t1 t1o]. induction t1.
-  intros [t2 t2o]. induction t2.
-  cbn.
-  - destruct t1o. constructor.
-Admitted.
+
+#[export, program]
+Instance reflect_natset : ReflectEq Natset.t :=
+  {| eqb := Natset.equal |}.
+Next Obligation.
+  apply todo.
+Defined.
 
 Definition print_natset l := "{"^print_list string_of_nat ", " (Natset.elements l)^"}".
 
@@ -90,6 +93,7 @@ Definition subterm_spec_eqb (s1 s2 : subterm_spec) :=
       (l1 == l2)
   | _, _ => false
   end.
+#[export]
 Instance reflect_subterm_spec : ReflectEq subterm_spec.
 Proof. 
   refine {| eqb := subterm_spec_eqb |}.  
@@ -1178,6 +1182,8 @@ Section CheckFix.
 Context (Σ : global_env_ext) (ρ : pathsEnv).
 Context (decreasing_args : list nat) (trees : list wf_paths).
 
+Notation tracep s := (trace (print_id s)).
+
 (** 
   The main checker descending into the recursive structure of a term.
   Checks if [t] only makes valid recursive calls, with variables (and their subterm information) being tracked in the context [G].
@@ -1196,12 +1202,12 @@ Context (decreasing_args : list nat) (trees : list wf_paths).
   [rs] is the stack of redexes traversed w/o having been triggered *)
 Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_check_result) (t : term) {struct t} : exc (list fix_check_result) := 
   (* possible optimisation: precompute [num_fixes] *)
-  trace ("check_rec_call_stack :: "^print_term Σ G.(loc_env) t) ;;
-  trace ("  Γ:"^print_context Σ G.(loc_env)) ;;
-  trace ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
-  trace ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
-  trace ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
-  let num_fixes := #|decreasing_args| in 
+  tracep ("check_rec_call_stack :: "^print_term Σ G.(loc_env) t) ;;
+  tracep ("  Γ:"^print_context Σ G.(loc_env)) ;;
+  tracep ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
+  tracep ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
+  tracep ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
+  let num_fixes := (#|decreasing_args|) in 
 
   match t with 
   | tApp f args =>
@@ -1217,7 +1223,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       (** check if [p] is a fixpoint (of the block of fixpoints we are currently checking),i.e. we are making a recursive call *)
       trace "check_rec_call_stack :: tRel" ;;
       if (Nat.leb G.(rel_min_fix) p) && (Nat.ltb p (G.(rel_min_fix) + num_fixes)) then
-        let rec_fixp_index := G.(rel_min_fix) + num_fixes - 1 - p in
+        let rec_fixp_index := (G.(rel_min_fix) + num_fixes - 1 - p) in
         decreasing_arg <- except (IndexErr "check_rec_call_stack" "invalid fixpoint index" rec_fixp_index) $ 
           nth_error decreasing_args rec_fixp_index;;
         let z_exc := except
@@ -1233,7 +1239,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           trace $ print_wf_paths Σ recarg_tree ;;
           trace "getting wf_paths for recursive arg" ;;
           z_tree <- stack_element_specif Σ ρ z;;
-          trace $ print_subterm_spec Σ z_tree ;;
+          trace $ "  result: "^print_subterm_spec Σ z_tree ;;
           trace "checking if arg is a strict subterm via rtree_incl" ;;
           result <- check_is_subterm z_tree recarg_tree;;
           trace $ "  result: "^print_check_subterm_result result ;;
@@ -1294,14 +1300,9 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
       disc_spec <- (subterm_specif Σ ρ G [] discriminant) ;;
       trace "subterm_specif of the branches: " ;;
       case_spec <- branches_specif Σ G (set_iota_specif nr disc_spec) ci.(ci_ind);;
-      trace "filter stack" ;;
-      let result := filter_stack_domain Σ ρ G.(loc_env) nr p stack in
-      stack' <- result ;; 
-      match result with
-      | (_,inr _ ) => trace "THIS SHOULD HAVE BEEN AN ERROR"
-      | _ => trace "OK, no error"
-      end ;;
-      trace "done filtering stack" ;;
+      trace $ "filter stack: " ^ print_stack Σ stack ;;
+      stack' <- filter_stack_domain Σ ρ G.(loc_env) nr p stack ;;
+      trace $ "done filtering stack: " ^print_stack Σ stack' ;;
       trace $ "  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack' ;;
       rs' <- fold_left_i (fun k rs' br' =>
           (* TODO: quadratic *)
@@ -1360,7 +1361,7 @@ Fixpoint check_rec_call_stack G (stack : list stack_element) (rs : list fix_chec
           and f is guarded with respect to the set of subterms S in e
       then f is guarded with respect to the set of subterms S in (g l1 ... lm). 
       Eduardo 7/9/98 according to Bruno *)
-  | tFix mfix_inner fix_ind => 
+  | tFix mfix_inner fix_ind =>
       trace "check_rec_call_stack :: tFix" ;;
       (* | Fix ((recindxs,i),(_,typarray,bodies as recdef) as fix) -> *)
       f <- except (IndexErr "check_rec_call_stack" "not enough fixpoints" fix_ind) $ nth_error mfix_inner fix_ind ;;
@@ -1547,6 +1548,8 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
   trace ("  Γg:"^print_guarded_env Σ G.(guarded_env)) ;;
   trace ("  rs("^(string_of_nat #|rs|)^"): "^print_rs Σ rs) ;;
   trace ("  stack("^(string_of_nat #|stack|)^"): "^print_stack Σ stack) ;;
+  trace ("  needreduce_of_head: "^ print_rs Σ [needreduce_of_head]) ;;
+  trace ("  needreduce_of_head: "^ print_rs Σ [needreduce_of_stack stack]) ;;
   let e := needreduce_of_head ||| needreduce_of_stack stack in
   match e with
   | NoNeedReduce =>
@@ -1557,12 +1560,14 @@ with check_rec_call_state G needreduce_of_head stack rs (expand_head : unit -> e
       (* Expand if possible, otherwise, last chance, propagate need
         for expansion, in the hope to be eventually erased *)
       catchMap (expand_head tt)
-        (fun err => trace "expand head failed, propagating need for expansion" ;; match err with
-          | NoReductionPossible =>
+        (fun err => trace "expand head failed, propagating need for expansion" ;;
+          (* match err with *)
+          (* | NoReductionPossible => *)
               tail <- except (IndexErr "check_rec_call_state" "" 0) $ tl rs ;;
               ret $ e :: tail
-          | _ => raise err
-          end)
+          (* | _ => raise err *)
+        (* end *))
+        (* TODO YF: double check where the NoReductionPossible check came from, that's not how it's done in OCaml *)
         (fun '(c, stack') => trace "expand head succeeded" ;; check_rec_call_stack G (stack' ++ stack) rs c)
   end
 

@@ -5,6 +5,7 @@ Require Import List String.
 
 (** The usual exception monad based on [sum] with a parameterizable type of exceptions. *)
 
+#[global]
 Instance sum_monad {Y}: Monad (fun X => X + Y)%type :=
   {|
     ret := fun T t => inl t;

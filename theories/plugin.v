@@ -108,18 +108,18 @@ Fixpoint check_fix_term (Σ : global_env) ρ (Γ : context) (t : term) {struct t
       (* fold_left (fun mbool d => mbool m&& check_fix_term Σ ρ mfix_ctx d.(dbody)) mfix (tmReturn true) *)
       (* m&&  *)
       tmPrint "checking fixpoint:" ;;
-      tmPrint mfix ;;
+      (* tmPrint mfix ;; *)
       (* NOTE : uncomment if using trace monad *)
-      res <- tmEval lazy (check_fix  (Σ, Monomorphic_ctx) ρ Γ mfix) ;;
+      res <- tmEval lazy (check_fix (Σ, Monomorphic_ctx) ρ Γ mfix) ;;
       match res with
       | (_, trace, inr e) => (* not guarded *)
-          trace <- tmEval cbv trace;;
-          e <- tmEval cbv e;;
+          trace <- tmEval lazy trace;;
+          e <- tmEval lazy e;;
           _ <- monad_iter tmPrint (MCList.rev trace) ;;
           tmPrint e ;;
           tmReturn false
       | (_, trace, inl tt) => (* guarded *)
-          trace <- tmEval cbv trace;;
+          trace <- tmEval lazy trace;;
           _ <- monad_iter tmPrint (MCList.rev trace) ;;
           tmPrint "success" ;;
           tmReturn true
@@ -197,3 +197,31 @@ Definition check_fix {A} (a : A) : TemplateMonad bool :=
 Definition check_fix_ci {A} (b : bool) (a : A) : TemplateMonad unit :=
   res <- check_fix a ;;
   if (res == b) then tmReturn tt else tmFail "error".
+
+Definition check_module mod :=
+  refs <- (tmQuoteModule mod) ;;
+  monad_iter (fun ref =>
+                match ref with
+                | ConstRef kn => nm <- tmEval lazy (("checking " ++ string_of_kername kn)%bs) ;;
+                                 tmPrint nm ;;
+                                 t <- tmUnquote (tConst kn Instance.empty) ;;
+                                 t' <- tmEval hnf (my_projT2 t) ;;
+                                 check_fix t' ;; ret tt
+                | _ => ret tt
+                end
+    ) refs ;;
+  ret tt.
+
+Definition check_module_ci b mod :=
+  refs <- (tmQuoteModule mod) ;;
+  monad_iter (fun ref =>
+                match ref with
+                | ConstRef kn => nm <- tmEval lazy (("checking " ++ string_of_kername kn)%bs) ;;
+                                 tmPrint nm ;;
+                                 t <- tmUnquote (tConst kn Instance.empty) ;;
+                                 t' <- tmEval hnf (my_projT2 t) ;;
+                                 check_fix_ci b t'
+                | _ => ret tt
+                end
+    ) refs ;;
+  ret tt.

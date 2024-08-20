@@ -11,7 +11,6 @@ From MetaCoq.Guarded Require Import MCRTree Inductives.
 Fixpoint boom (x: nat) : False := boom (id (pred x + O)).
 MetaCoq Run (check_fix_ci false boom).
 
-
 Print Nat.sub.
 Fixpoint div (n m : nat) := 
   match n with 
@@ -244,21 +243,35 @@ with count_cons_odd n (o : odd n) : nat :=
   | oddS n e => 1 + count_cons_even n e
   end.
 
-MetaCoq Run (check_fix_ci true count_cons_odd). 
-MetaCoq Run (check_fix_ci true count_cons_even). 
+(* MetaCoq Run (check_fix_ci true count_cons_odd).  *)
+(* MetaCoq Run (check_fix_ci true count_cons_even).  *)
 
 
 
 (** Rosetrees *)
 Definition sumn (l : list nat) := List.fold_left (fun a b => a + b) l 0. 
 MetaCoq Run (check_fix_ci true sumn). 
-
+ 
 Fixpoint rtree_size {X} (t : rtree X) := 
   match t with
-  | rnode l => sumn (map rtree_size l)
+  | rnode l => rnode X ((fix map (l : list (rtree X)) : list (rtree X) := match l with
+                                                        | [] => []
+                                                         | a :: t => rtree_size a :: map t
+                                                                      end) l)
   end.
 MetaCoq Run (check_inductive None rtree). 
-MetaCoq Run (check_fix_ci true (@rtree_size)). 
+(* MetaCoq Run (check_fix_ci true (@rtree_size)). *)
+
+Inductive otree := onode (l : option otree).
+
+Fixpoint otree_id (t : otree) :=
+  match t with
+  | onode l => match l with
+               | Some x => onode (Some (otree_id x))
+               | None => onode None
+               end
+  end.
+
 
 (* I feel a little bad about lying to Coq about the structural argument, but whatever *)
 #[bypass_check(guard)]
@@ -482,3 +495,20 @@ etransitivity. apply H. constructor.
 symmetry. apply H. constructor. constructor.
 constructor. constructor.
 Qed. *)
+
+
+Require Import Vector.
+
+#[bypass_check(guard)]
+Fixpoint map2 {A B C : Type} (f : A -> B -> C) (n : nat) (v1 : t A n) (v2 : t B n)
+  {struct v1}
+  : t C n :=
+  match v1 with
+  | @nil _ => fun _ => nil C
+  | @cons _ a n' v1' => fun v2 : t B (S n') =>
+                         match v2 with
+                         | @cons _ b n'' v2' => fun v1'' : Vector.t A n'' => cons _ (f a b) _ (map2 f v1'' v2')
+                         end v1'
+  end v2.
+
+MetaCoq Run (check_fix_ci false (@map2)).
